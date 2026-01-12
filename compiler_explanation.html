@@ -1,0 +1,1585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comprehensive Analysis of the Minimal C-Minus Compiler</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.8;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            border-radius: 15px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 4px solid #667eea;
+            padding-bottom: 15px;
+            font-size: 2.5em;
+        }
+        h2 {
+            color: #34495e;
+            margin-top: 40px;
+            border-left: 5px solid #764ba2;
+            padding-left: 15px;
+            font-size: 1.8em;
+        }
+        h3 {
+            color: #667eea;
+            margin-top: 30px;
+            font-size: 1.4em;
+        }
+        h4 {
+            color: #764ba2;
+            margin-top: 20px;
+            font-size: 1.2em;
+        }
+        .code-block {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            overflow-x: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            position: relative;
+        }
+        .code-block pre {
+            margin: 0;
+            line-height: 1.6;
+        }
+        .theory-box {
+            background: linear-gradient(135deg, #667eea10 0%, #764ba210 100%);
+            border-left: 4px solid #667eea;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 0 8px 8px 0;
+        }
+        .example-box {
+            background: #e8f5e9;
+            border: 2px solid #4caf50;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .example-box h4 {
+            color: #2e7d32;
+            margin-top: 0;
+        }
+        .important-note {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .important-note::before {
+            content: "⚠️ Important: ";
+            font-weight: bold;
+            color: #856404;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            border: 1px solid #dee2e6;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-weight: bold;
+        }
+        tr:nth-child(even) {
+            background: #f8f9fa;
+        }
+        .flow-diagram {
+            background: white;
+            border: 2px solid #667eea;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .flow-step {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            margin: 5px;
+        }
+        .arrow {
+            font-size: 1.5em;
+            color: #667eea;
+            margin: 0 10px;
+        }
+        .toc {
+            background: #f8f9fa;
+            border: 2px solid #dee2e6;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 30px 0;
+        }
+        .toc h3 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+        .toc ul {
+            list-style-type: none;
+            padding-left: 0;
+        }
+        .toc li {
+            margin: 10px 0;
+            padding-left: 20px;
+            position: relative;
+        }
+        .toc li:before {
+            content: "→";
+            position: absolute;
+            left: 0;
+            color: #667eea;
+        }
+        .toc a {
+            color: #34495e;
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+        .toc a:hover {
+            color: #667eea;
+        }
+        code {
+            background: #f0f0f0;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            color: #d73a49;
+        }
+        .highlight {
+            background: #ffeb3b;
+            padding: 2px 4px;
+        }
+        .tree-structure {
+            font-family: monospace;
+            line-height: 1.4;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎯 Comprehensive Analysis of the Minimal C-Minus Compiler</h1>
+        
+        <div class="toc">
+            <h3>Table of Contents</h3>
+            <ul>
+                <li><a href="#symbol-table">1. Symbol Table: Theory and Implementation</a></li>
+                <li><a href="#parse-tree">2. Parse Trees and Their Role</a></li>
+                <li><a href="#ast">3. Abstract Syntax Trees (AST)</a></li>
+                <li><a href="#ast-implementation">4. AST Implementation in This Project</a></li>
+                <li><a href="#student-responsibilities">5. Student Responsibilities vs Bison's Role</a></li>
+                <li><a href="#tac-generation">6. TAC Generation from AST</a></li>
+                <li><a href="#cfg-theory">7. Context-Free Grammars and Parsing Theory</a></li>
+                <li><a href="#compiler-structure">8. Complete Compiler Structure</a></li>
+                <li><a href="#practical-examples">9. Practical C-Minus Examples</a></li>
+            </ul>
+        </div>
+
+        <h2 id="symbol-table">1. What is a Symbol Table?</h2>
+        
+        <div class="theory-box">
+            <h3>Theoretical Foundation</h3>
+            <p>A <strong>symbol table</strong> is a crucial data structure in compiler design that serves as a centralized repository for all identifier information encountered during compilation. It acts as the compiler's "memory" about every variable, function, type, and other named entities in the source program.</p>
+            
+            <p>The symbol table bridges the gap between the syntactic world (where identifiers are just strings) and the semantic world (where identifiers have types, scopes, memory locations, and other attributes). It's essential for:</p>
+            <ul>
+                <li><strong>Semantic Analysis:</strong> Checking if variables are declared before use</li>
+                <li><strong>Type Checking:</strong> Ensuring type compatibility in operations</li>
+                <li><strong>Code Generation:</strong> Providing memory location information</li>
+                <li><strong>Optimization:</strong> Tracking variable usage patterns</li>
+            </ul>
+        </div>
+
+        <h3>Core Functions of a Symbol Table</h3>
+        
+        <table>
+            <tr>
+                <th>Function</th>
+                <th>Purpose</th>
+                <th>When Used</th>
+                <th>Example in C-Minus</th>
+            </tr>
+            <tr>
+                <td><strong>Insert/Add</strong></td>
+                <td>Add new identifier when declared</td>
+                <td>During declaration processing</td>
+                <td><code>int x;</code> → adds 'x' to table</td>
+            </tr>
+            <tr>
+                <td><strong>Lookup/Search</strong></td>
+                <td>Find identifier information</td>
+                <td>When identifier is referenced</td>
+                <td><code>y = x + 5;</code> → looks up 'x' and 'y'</td>
+            </tr>
+            <tr>
+                <td><strong>Update</strong></td>
+                <td>Modify identifier attributes</td>
+                <td>During semantic analysis</td>
+                <td>Setting type information, offsets</td>
+            </tr>
+            <tr>
+                <td><strong>Scope Management</strong></td>
+                <td>Handle nested scopes</td>
+                <td>Entering/leaving blocks</td>
+                <td>Not in minimal version (single scope)</td>
+            </tr>
+        </table>
+
+        <h2>2. How Symbol Tables Are Used: Theory and Practice</h2>
+
+        <div class="theory-box">
+            <h3>Theoretical Usage Patterns</h3>
+            <p>Symbol tables are accessed during multiple compilation phases:</p>
+            
+            <h4>Phase 1: Declaration Processing</h4>
+            <p>When the parser encounters a declaration like <code>int x;</code>, it:</p>
+            <ol>
+                <li>Checks if 'x' already exists (prevent redeclaration)</li>
+                <li>Allocates storage information (stack offset, register, etc.)</li>
+                <li>Records type information (integer in this case)</li>
+                <li>Adds entry to symbol table with all attributes</li>
+            </ol>
+
+            <h4>Phase 2: Reference Resolution</h4>
+            <p>When encountering a use like <code>x = 10;</code>, the compiler:</p>
+            <ol>
+                <li>Looks up 'x' in the symbol table</li>
+                <li>Verifies it has been declared (semantic check)</li>
+                <li>Retrieves its memory location for code generation</li>
+                <li>Checks type compatibility for the assignment</li>
+            </ol>
+        </div>
+
+        <div class="example-box">
+            <h4>Practical Example: Symbol Table Evolution</h4>
+            <p>Consider this C-Minus program:</p>
+            <div class="code-block">
+                <pre>int x;      // Line 1
+int y;      // Line 2
+x = 10;     // Line 3
+y = x + 5;  // Line 4</pre>
+            </div>
+            
+            <p><strong>Symbol Table State Evolution:</strong></p>
+            <table>
+                <tr>
+                    <th>After Line</th>
+                    <th>Symbol Table Contents</th>
+                    <th>Action Taken</th>
+                </tr>
+                <tr>
+                    <td>Line 1</td>
+                    <td>[{name: "x", type: "int", offset: 0}]</td>
+                    <td>Added 'x' with stack offset 0</td>
+                </tr>
+                <tr>
+                    <td>Line 2</td>
+                    <td>[{name: "x", offset: 0}, {name: "y", offset: 4}]</td>
+                    <td>Added 'y' with stack offset 4</td>
+                </tr>
+                <tr>
+                    <td>Line 3</td>
+                    <td>No change</td>
+                    <td>Looked up 'x', found at offset 0</td>
+                </tr>
+                <tr>
+                    <td>Line 4</td>
+                    <td>No change</td>
+                    <td>Looked up 'y' (offset 4) and 'x' (offset 0)</td>
+                </tr>
+            </table>
+        </div>
+
+        <h2>3. Symbol Table Implementation in This Project</h2>
+
+        <div class="code-block">
+            <pre>// From symtab.h - The Symbol Table Structure
+typedef struct {
+    char* name;     // Variable identifier (e.g., "x", "count")
+    int offset;     // Stack offset in bytes for MIPS
+} Symbol;
+
+typedef struct {
+    Symbol vars[MAX_VARS];  // Array of all variables
+    int count;              // Number of variables declared
+    int nextOffset;         // Next available stack offset
+} SymbolTable;</pre>
+        </div>
+
+        <h3>Why This Implementation?</h3>
+
+        <div class="theory-box">
+            <h4>Design Decisions and Rationale</h4>
+            
+            <p><strong>1. Array-Based Storage:</strong></p>
+            <ul>
+                <li><strong>Why:</strong> Simple, efficient for small programs</li>
+                <li><strong>Trade-off:</strong> O(n) lookup time vs. simplicity</li>
+                <li><strong>Alternative:</strong> Hash table for O(1) average lookup</li>
+            </ul>
+
+            <p><strong>2. Stack Offset Tracking:</strong></p>
+            <ul>
+                <li><strong>Why:</strong> MIPS uses stack-based variable storage</li>
+                <li><strong>How:</strong> Each variable gets 4 bytes (32-bit integer)</li>
+                <li><strong>Result:</strong> Direct mapping to <code>lw $t0, offset($sp)</code></li>
+            </ul>
+
+            <p><strong>3. Single Global Scope:</strong></p>
+            <ul>
+                <li><strong>Why:</strong> Simplified for educational purposes</li>
+                <li><strong>Real compilers:</strong> Would use scope stack or tree</li>
+                <li><strong>Extension:</strong> Could add scope levels with parent pointers</li>
+            </ul>
+        </div>
+
+        <div class="example-box">
+            <h4>Detailed Implementation Analysis</h4>
+            
+            <div class="code-block">
+                <pre>// Adding a variable - Complete flow
+int addVar(char* name) {
+    // Step 1: Check for duplicate declaration
+    if (isVarDeclared(name)) {
+        return -1;  // Semantic error: redeclaration
+    }
+    
+    // Step 2: Create new symbol entry
+    symtab.vars[symtab.count].name = strdup(name);
+    symtab.vars[symtab.count].offset = symtab.nextOffset;
+    
+    // Step 3: Update table metadata
+    symtab.nextOffset += 4;  // 4 bytes for int in MIPS
+    symtab.count++;
+    
+    // Step 4: Return offset for code generation
+    return symtab.vars[symtab.count - 1].offset;
+}</pre>
+            </div>
+            
+            <p>This implementation demonstrates:</p>
+            <ul>
+                <li><strong>Semantic checking:</strong> Prevents duplicate declarations</li>
+                <li><strong>Memory management:</strong> Automatic offset calculation</li>
+                <li><strong>Code generation support:</strong> Returns offset for MIPS</li>
+            </ul>
+        </div>
+
+        <h2 id="parse-tree">4. What is a Parse Tree?</h2>
+
+        <div class="theory-box">
+            <h3>Parse Tree Theory</h3>
+            <p>A <strong>parse tree</strong> (also called a <strong>concrete syntax tree</strong>) is a tree representation that shows exactly how the input was parsed according to the grammar rules. Every node represents either a terminal (token) or non-terminal (grammar rule) symbol.</p>
+            
+            <p><strong>Key Characteristics:</strong></p>
+            <ul>
+                <li>Contains ALL grammar symbols (including syntactic sugar)</li>
+                <li>Shows complete derivation from start symbol to terminals</li>
+                <li>Includes punctuation, keywords, and operators</li>
+                <li>Can be very large and verbose</li>
+            </ul>
+        </div>
+
+        <div class="example-box">
+            <h4>Parse Tree Example</h4>
+            <p>For the statement: <code>x = 10 + 5;</code></p>
+            
+            <div class="tree-structure">
+                <pre>
+                    stmt
+                     |
+                  assign
+                /   |   \
+              ID   '='   expr    ';'
+              |           |
+             'x'       expr '+' expr
+                        |        |
+                       NUM      NUM
+                        |        |
+                       '10'     '5'
+                </pre>
+            </div>
+            
+            <p>Notice how the parse tree includes:</p>
+            <ul>
+                <li>Every grammar rule used (stmt → assign)</li>
+                <li>All punctuation (=, ;)</li>
+                <li>Complete structure of expression parsing</li>
+            </ul>
+        </div>
+
+        <h2 id="ast">5. What is an Abstract Syntax Tree (AST)?</h2>
+
+        <div class="theory-box">
+            <h3>AST Theory and Purpose</h3>
+            <p>An <strong>Abstract Syntax Tree (AST)</strong> is a simplified, hierarchical representation of the source code that captures the essential structure while removing syntactic details that are not needed for semantic analysis and code generation.</p>
+            
+            <p><strong>Key Differences from Parse Tree:</strong></p>
+            <table>
+                <tr>
+                    <th>Aspect</th>
+                    <th>Parse Tree</th>
+                    <th>Abstract Syntax Tree</th>
+                </tr>
+                <tr>
+                    <td>Purpose</td>
+                    <td>Show exact parsing process</td>
+                    <td>Represent program semantics</td>
+                </tr>
+                <tr>
+                    <td>Size</td>
+                    <td>Large and verbose</td>
+                    <td>Compact and efficient</td>
+                </tr>
+                <tr>
+                    <td>Punctuation</td>
+                    <td>Includes all (;, {, }, etc.)</td>
+                    <td>Omits unnecessary punctuation</td>
+                </tr>
+                <tr>
+                    <td>Grammar rules</td>
+                    <td>Shows all intermediate rules</td>
+                    <td>Only essential nodes</td>
+                </tr>
+                <tr>
+                    <td>Use in compilation</td>
+                    <td>Intermediate during parsing</td>
+                    <td>Used for all later phases</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="example-box">
+            <h4>AST vs Parse Tree Comparison</h4>
+            <p>For the same statement: <code>x = 10 + 5;</code></p>
+            
+            <div style="display: flex; justify-content: space-between;">
+                <div style="width: 48%;">
+                    <h5>Parse Tree (Concrete)</h5>
+                    <div class="tree-structure">
+                        <pre>
+        stmt
+         |
+      assign
+      /  |  \
+    ID  '=' expr ';'
+    |        |
+   'x'   expr '+' expr
+          |        |
+         NUM      NUM
+          |        |
+         '10'     '5'
+                        </pre>
+                    </div>
+                </div>
+                
+                <div style="width: 48%;">
+                    <h5>AST (Abstract)</h5>
+                    <div class="tree-structure">
+                        <pre>
+      ASSIGN
+      /    \
+    'x'    ADD
+           /  \
+         10    5
+                        </pre>
+                    </div>
+                </div>
+            </div>
+            
+            <p>The AST is much simpler: no semicolons, no intermediate expression nodes, just the essential structure!</p>
+        </div>
+
+        <h2 id="ast-implementation">6. AST Implementation Approach in This Project</h2>
+
+        <h3>Node Type Design</h3>
+
+        <div class="code-block">
+            <pre>// From ast.h - Node type enumeration
+typedef enum {
+    NODE_NUM,       // Numeric literal: 42, 100, etc.
+    NODE_VAR,       // Variable reference: x, count, etc.
+    NODE_BINOP,     // Binary operation: +, -, *, /
+    NODE_DECL,      // Declaration: int x
+    NODE_ASSIGN,    // Assignment: x = expr
+    NODE_PRINT,     // Print statement: print(expr)
+    NODE_STMT_LIST  // List of statements (program structure)
+} NodeType;</pre>
+        </div>
+
+        <div class="theory-box">
+            <h3>Design Philosophy: Union-Based Node Structure</h3>
+            
+            <p>This project uses a <strong>tagged union</strong> approach for AST nodes, which is memory-efficient and type-safe:</p>
+            
+            <div class="code-block">
+                <pre>typedef struct ASTNode {
+    NodeType type;  // Discriminator: tells us which union field is valid
+    
+    union {
+        int num;                        // For NODE_NUM
+        char* name;                     // For NODE_VAR, NODE_DECL
+        struct {                        // For NODE_BINOP
+            char op;
+            struct ASTNode* left;
+            struct ASTNode* right;
+        } binop;
+        struct {                        // For NODE_ASSIGN
+            char* var;
+            struct ASTNode* value;
+        } assign;
+        struct ASTNode* expr;           // For NODE_PRINT
+        struct {                        // For NODE_STMT_LIST
+            struct ASTNode* stmt;
+            struct ASTNode* next;
+        } stmtlist;
+    } data;
+} ASTNode;</pre>
+            </div>
+            
+            <p><strong>Why use a union?</strong></p>
+            <ul>
+                <li><strong>Memory efficiency:</strong> Only the needed fields consume memory</li>
+                <li><strong>Type safety:</strong> The type field tells us which union member is valid</li>
+                <li><strong>Extensibility:</strong> Easy to add new node types</li>
+                <li><strong>Clear semantics:</strong> Each node type has exactly the fields it needs</li>
+            </ul>
+        </div>
+
+        <h3>AST Construction Functions</h3>
+
+        <div class="example-box">
+            <h4>Detailed AST Construction Process</h4>
+            
+            <p>Let's trace how the AST is built for: <code>x = 10 + 5;</code></p>
+            
+            <div class="code-block">
+                <pre>// Step 1: Parser recognizes '10' - creates number node
+ASTNode* num1 = createNum(10);
+// Result: {type: NODE_NUM, data.num: 10}
+
+// Step 2: Parser recognizes '5' - creates another number node  
+ASTNode* num2 = createNum(5);
+// Result: {type: NODE_NUM, data.num: 5}
+
+// Step 3: Parser recognizes '+' operator - creates binary operation
+ASTNode* add = createBinOp('+', num1, num2);
+// Result: {type: NODE_BINOP, data.binop: {op: '+', left: num1, right: num2}}
+
+// Step 4: Parser recognizes assignment - creates assignment node
+ASTNode* assign = createAssign("x", add);
+// Result: {type: NODE_ASSIGN, data.assign: {var: "x", value: add}}</pre>
+            </div>
+            
+            <p>The resulting AST structure:</p>
+            <div class="tree-structure">
+                <pre>
+    NODE_ASSIGN
+    /         \
+  "x"      NODE_BINOP(+)
+           /          \
+     NODE_NUM(10)  NODE_NUM(5)
+                </pre>
+            </div>
+        </div>
+
+        <h2 id="student-responsibilities">7. Student Responsibilities vs Bison's Automatic Work</h2>
+
+        <div class="important-note">
+            Understanding the division of labor between what Bison does automatically and what students must implement is crucial for compiler construction.
+        </div>
+
+        <h3>What Bison Does Automatically</h3>
+
+        <div class="theory-box">
+            <h4>Bison's Automated Tasks</h4>
+            
+            <p><strong>1. Parser Generation:</strong></p>
+            <ul>
+                <li>Converts grammar rules to parsing tables (LALR(1))</li>
+                <li>Generates state machine for shift/reduce parsing</li>
+                <li>Handles parse stack management</li>
+                <li>Performs syntax error detection</li>
+            </ul>
+
+            <p><strong>2. Token Stream Management:</strong></p>
+            <ul>
+                <li>Calls yylex() to get next token</li>
+                <li>Manages lookahead token</li>
+                <li>Handles token values through yylval</li>
+            </ul>
+
+            <p><strong>3. Semantic Value Propagation:</strong></p>
+            <ul>
+                <li>Manages the semantic value stack</li>
+                <li>Passes values between rules using $$ and $n notation</li>
+                <li>Type-checks semantic values based on %type declarations</li>
+            </ul>
+
+            <p><strong>4. Conflict Resolution:</strong></p>
+            <ul>
+                <li>Applies precedence and associativity rules</li>
+                <li>Resolves shift/reduce conflicts</li>
+                <li>Reports reduce/reduce conflicts</li>
+            </ul>
+        </div>
+
+        <h3>What Students Must Implement</h3>
+
+        <table>
+            <tr>
+                <th>Component</th>
+                <th>Student Responsibility</th>
+                <th>Example Code</th>
+            </tr>
+            <tr>
+                <td><strong>AST Node Functions</strong></td>
+                <td>Write all createXXX() functions</td>
+                <td><code>ASTNode* createNum(int value)</code></td>
+            </tr>
+            <tr>
+                <td><strong>Semantic Actions</strong></td>
+                <td>Add actions to grammar rules</td>
+                <td><code>expr: NUM { $$ = createNum($1); }</code></td>
+            </tr>
+            <tr>
+                <td><strong>Memory Management</strong></td>
+                <td>Allocate nodes, free strings</td>
+                <td><code>malloc(sizeof(ASTNode))</code></td>
+            </tr>
+            <tr>
+                <td><strong>Symbol Table Operations</strong></td>
+                <td>Implement lookup, insert functions</td>
+                <td><code>addVar(name), getVarOffset(name)</code></td>
+            </tr>
+            <tr>
+                <td><strong>Error Handling</strong></td>
+                <td>Semantic error checking</td>
+                <td>Check for undeclared variables</td>
+            </tr>
+            <tr>
+                <td><strong>Tree Traversal</strong></td>
+                <td>Write functions to process AST</td>
+                <td><code>generateTAC(node), printAST(node)</code></td>
+            </tr>
+        </table>
+
+        <div class="example-box">
+            <h4>Detailed Example: Student Implementation in parser.y</h4>
+            
+            <div class="code-block">
+                <pre>// WHAT BISON PROVIDES (automatic):
+// - Parsing algorithm (LALR)
+// - Stack management
+// - Lookahead handling
+// - Error recovery
+
+// WHAT STUDENTS MUST WRITE:
+
+// 1. Token and type declarations
+%token &lt;num&gt; NUM
+%token &lt;str&gt; ID
+%type &lt;node&gt; expr stmt program
+
+// 2. Grammar rules with semantic actions
+assign:
+    ID '=' expr ';' {
+        // STUDENT CODE: Build AST node
+        $$ = createAssign($1, $3);
+        
+        // STUDENT CODE: Memory management
+        free($1);  // Free the string from scanner
+    }
+    ;
+
+expr:
+    expr '+' expr {
+        // STUDENT CODE: Create binary operation node
+        $$ = createBinOp('+', $1, $3);
+    }
+    | NUM {
+        // STUDENT CODE: Create number node
+        $$ = createNum($1);
+    }
+    | ID {
+        // STUDENT CODE: Create variable node
+        $$ = createVar($1);
+        free($1);
+    }
+    ;
+
+// 3. Helper functions
+void yyerror(const char* s) {
+    // STUDENT CODE: Error reporting
+    fprintf(stderr, "Syntax Error: %s\n", s);
+}</pre>
+            </div>
+        </div>
+
+        <h3>The Critical Interface: Scanner ↔ Parser ↔ AST</h3>
+
+        <div class="flow-diagram">
+            <div class="flow-step">Source Code</div>
+            <span class="arrow">→</span>
+            <div class="flow-step">Scanner (Flex)<br><small>Student: Token patterns</small></div>
+            <span class="arrow">→</span>
+            <div class="flow-step">Parser (Bison)<br><small>Automatic: Parsing<br>Student: Actions</small></div>
+            <span class="arrow">→</span>
+            <div class="flow-step">AST<br><small>Student: All node creation</small></div>
+        </div>
+
+        <h2 id="tac-generation">8. How the AST is Used to Generate TAC</h2>
+
+        <div class="theory-box">
+            <h3>Three-Address Code (TAC) Theory</h3>
+            
+            <p><strong>Three-Address Code</strong> is an intermediate representation where each instruction contains at most three addresses (operands). It serves as a bridge between the high-level AST and low-level machine code.</p>
+            
+            <p><strong>TAC Characteristics:</strong></p>
+            <ul>
+                <li><strong>Simple instructions:</strong> Each does only one operation</li>
+                <li><strong>Explicit temporaries:</strong> All intermediate values have names</li>
+                <li><strong>Linear sequence:</strong> No nested expressions</li>
+                <li><strong>Easy to optimize:</strong> Simple patterns to match</li>
+            </ul>
+            
+            <p><strong>TAC Instruction Format:</strong></p>
+            <code>result = arg1 op arg2</code> or <code>result = op arg1</code> or <code>op arg1</code>
+        </div>
+
+        <h3>AST to TAC Translation Process</h3>
+
+        <div class="example-box">
+            <h4>Complete Translation Example</h4>
+            
+            <p>Source code:</p>
+            <div class="code-block">
+                <pre>int x;
+int y;
+x = 10;
+y = x + 20 + 5;</pre>
+            </div>
+            
+            <p><strong>Step 1: AST Structure</strong></p>
+            <div class="tree-structure">
+                <pre>
+STMT_LIST
+    ├── DECL("x")
+    ├── DECL("y")
+    ├── ASSIGN("x", NUM(10))
+    └── ASSIGN("y", ADD(ADD(VAR("x"), NUM(20)), NUM(5)))
+                </pre>
+            </div>
+            
+            <p><strong>Step 2: TAC Generation Algorithm</strong></p>
+            <div class="code-block">
+                <pre>// Recursive traversal of AST
+void generateTAC(ASTNode* node) {
+    switch(node->type) {
+        case NODE_DECL:
+            // Generate: DECL variable_name
+            appendTAC(createTAC(TAC_DECL, NULL, NULL, node->data.name));
+            break;
+            
+        case NODE_ASSIGN:
+            // Generate code for expression first
+            char* exprResult = generateTACExpr(node->data.assign.value);
+            // Then generate: variable = exprResult
+            appendTAC(createTAC(TAC_ASSIGN, exprResult, NULL, node->data.assign.var));
+            break;
+            
+        case NODE_STMT_LIST:
+            // Process statements in order
+            generateTAC(node->data.stmtlist.stmt);
+            generateTAC(node->data.stmtlist.next);
+            break;
+    }
+}
+
+char* generateTACExpr(ASTNode* node) {
+    switch(node->type) {
+        case NODE_NUM:
+            // Return constant as string
+            char* temp = malloc(20);
+            sprintf(temp, "%d", node->data.num);
+            return temp;
+            
+        case NODE_VAR:
+            // Return variable name
+            return strdup(node->data.name);
+            
+        case NODE_BINOP:
+            // Recursively generate code for operands
+            char* left = generateTACExpr(node->data.binop.left);
+            char* right = generateTACExpr(node->data.binop.right);
+            
+            // Create new temporary for result
+            char* temp = newTemp();  // generates t0, t1, t2, ...
+            
+            // Generate: temp = left + right
+            appendTAC(createTAC(TAC_ADD, left, right, temp));
+            
+            return temp;
+    }
+}</pre>
+            </div>
+            
+            <p><strong>Step 3: Generated TAC</strong></p>
+            <div class="code-block">
+                <pre>1: DECL x
+2: DECL y
+3: x = 10
+4: t0 = x + 20     // First addition
+5: t1 = t0 + 5     // Second addition
+6: y = t1          // Final assignment</pre>
+            </div>
+        </div>
+
+        <h3>TAC Optimization in This Project</h3>
+
+        <div class="theory-box">
+            <h4>Optimization Techniques Implemented</h4>
+            
+            <p><strong>1. Constant Folding:</strong></p>
+            <p>Evaluate constant expressions at compile time:</p>
+            <div class="code-block">
+                <pre>// Before optimization:
+t0 = 10 + 20
+x = t0
+
+// After optimization:
+x = 30  // Computed at compile time</pre>
+            </div>
+            
+            <p><strong>2. Copy Propagation:</strong></p>
+            <p>Replace variables with their known values:</p>
+            <div class="code-block">
+                <pre>// Before optimization:
+x = 10
+y = x
+z = y + 5
+
+// After optimization:
+x = 10
+y = 10  // Propagated from x
+z = 15  // Computed using propagated value</pre>
+            </div>
+        </div>
+
+        <h2 id="cfg-theory">9. Deep Dive: Context-Free Grammars and Parsing Theory</h2>
+
+        <div class="theory-box">
+            <h3>Context-Free Grammar (CFG) Fundamentals</h3>
+            
+            <p>A <strong>Context-Free Grammar</strong> is a formal system for describing the syntax of programming languages. It consists of:</p>
+            
+            <ul>
+                <li><strong>Terminals (T):</strong> Basic symbols (tokens) like NUM, ID, '+', ';'</li>
+                <li><strong>Non-terminals (N):</strong> Grammar variables like expr, stmt, program</li>
+                <li><strong>Start symbol (S):</strong> The top-level non-terminal (usually 'program')</li>
+                <li><strong>Production rules (P):</strong> Rules defining how non-terminals expand</li>
+            </ul>
+            
+            <p><strong>Formal Definition:</strong> G = (N, T, P, S)</p>
+        </div>
+
+        <h3>The C-Minus Grammar in This Project</h3>
+
+        <div class="code-block">
+            <pre>// Simplified C-Minus Grammar (BNF notation)
+program     → stmt_list
+
+stmt_list   → stmt
+            | stmt_list stmt
+
+stmt        → decl
+            | assign
+            | print_stmt
+
+decl        → INT ID ';'
+
+assign      → ID '=' expr ';'
+
+expr        → NUM
+            | ID
+            | expr '+' expr
+
+print_stmt  → PRINT '(' expr ')' ';'</pre>
+        </div>
+
+        <h3>Derivations and Parse Trees</h3>
+
+        <div class="example-box">
+            <h4>Complete Derivation Example</h4>
+            
+            <p>For input: <code>int x; x = 5 + 3;</code></p>
+            
+            <p><strong>Leftmost Derivation:</strong></p>
+            <ol>
+                <li>program</li>
+                <li>⇒ stmt_list</li>
+                <li>⇒ stmt_list stmt</li>
+                <li>⇒ stmt stmt</li>
+                <li>⇒ decl stmt</li>
+                <li>⇒ INT ID ';' stmt</li>
+                <li>⇒ INT ID ';' assign</li>
+                <li>⇒ INT ID ';' ID '=' expr ';'</li>
+                <li>⇒ INT ID ';' ID '=' expr '+' expr ';'</li>
+                <li>⇒ INT ID ';' ID '=' NUM '+' expr ';'</li>
+                <li>⇒ INT ID ';' ID '=' NUM '+' NUM ';'</li>
+                <li>⇒ int x ; x = 5 + 3 ;</li>
+            </ol>
+        </div>
+
+        <h3>Parsing Algorithms and Techniques</h3>
+
+        <div class="theory-box">
+            <h4>LALR(1) Parsing (Used by Bison)</h4>
+            
+            <p><strong>LALR(1)</strong> = Look-Ahead LR with 1 token lookahead</p>
+            
+            <p><strong>Key Concepts:</strong></p>
+            <ul>
+                <li><strong>Bottom-up parsing:</strong> Builds tree from leaves to root</li>
+                <li><strong>Shift-Reduce:</strong> Two main operations:
+                    <ul>
+                        <li><strong>Shift:</strong> Move input token onto stack</li>
+                        <li><strong>Reduce:</strong> Replace stack top with non-terminal</li>
+                    </ul>
+                </li>
+                <li><strong>Parsing table:</strong> ACTION and GOTO tables guide decisions</li>
+                <li><strong>Lookahead:</strong> Uses next token to resolve ambiguities</li>
+            </ul>
+        </div>
+
+        <div class="example-box">
+            <h4>Shift-Reduce Parsing Example</h4>
+            
+            <p>Parsing: <code>x = 5 + 3</code></p>
+            
+            <table>
+                <tr>
+                    <th>Step</th>
+                    <th>Stack</th>
+                    <th>Input</th>
+                    <th>Action</th>
+                </tr>
+                <tr>
+                    <td>1</td>
+                    <td>$</td>
+                    <td>x = 5 + 3 $</td>
+                    <td>Shift x</td>
+                </tr>
+                <tr>
+                    <td>2</td>
+                    <td>$ x</td>
+                    <td>= 5 + 3 $</td>
+                    <td>Reduce x → ID</td>
+                </tr>
+                <tr>
+                    <td>3</td>
+                    <td>$ ID</td>
+                    <td>= 5 + 3 $</td>
+                    <td>Shift =</td>
+                </tr>
+                <tr>
+                    <td>4</td>
+                    <td>$ ID =</td>
+                    <td>5 + 3 $</td>
+                    <td>Shift 5</td>
+                </tr>
+                <tr>
+                    <td>5</td>
+                    <td>$ ID = 5</td>
+                    <td>+ 3 $</td>
+                    <td>Reduce 5 → NUM</td>
+                </tr>
+                <tr>
+                    <td>6</td>
+                    <td>$ ID = NUM</td>
+                    <td>+ 3 $</td>
+                    <td>Reduce NUM → expr</td>
+                </tr>
+                <tr>
+                    <td>7</td>
+                    <td>$ ID = expr</td>
+                    <td>+ 3 $</td>
+                    <td>Shift +</td>
+                </tr>
+                <tr>
+                    <td>8</td>
+                    <td>$ ID = expr +</td>
+                    <td>3 $</td>
+                    <td>Shift 3</td>
+                </tr>
+                <tr>
+                    <td>9</td>
+                    <td>$ ID = expr + 3</td>
+                    <td>$</td>
+                    <td>Reduce 3 → NUM</td>
+                </tr>
+                <tr>
+                    <td>10</td>
+                    <td>$ ID = expr + NUM</td>
+                    <td>$</td>
+                    <td>Reduce NUM → expr</td>
+                </tr>
+                <tr>
+                    <td>11</td>
+                    <td>$ ID = expr + expr</td>
+                    <td>$</td>
+                    <td>Reduce expr + expr → expr</td>
+                </tr>
+                <tr>
+                    <td>12</td>
+                    <td>$ ID = expr</td>
+                    <td>$</td>
+                    <td>Reduce ID = expr → assign</td>
+                </tr>
+            </table>
+        </div>
+
+        <h3>Ambiguity and Precedence</h3>
+
+        <div class="theory-box">
+            <h4>Handling Ambiguous Grammars</h4>
+            
+            <p>The expression grammar <code>expr → expr '+' expr</code> is ambiguous. For <code>1 + 2 + 3</code>, two parse trees are possible:</p>
+            
+            <div style="display: flex; justify-content: space-around;">
+                <div>
+                    <h5>Left Associative (Correct)</h5>
+                    <div class="tree-structure">
+                        <pre>
+      +
+     / \
+    +   3
+   / \
+  1   2
+                        </pre>
+                    </div>
+                    <p>Evaluates as: (1 + 2) + 3 = 6</p>
+                </div>
+                
+                <div>
+                    <h5>Right Associative (Wrong)</h5>
+                    <div class="tree-structure">
+                        <pre>
+      +
+     / \
+    1   +
+       / \
+      2   3
+                        </pre>
+                    </div>
+                    <p>Evaluates as: 1 + (2 + 3) = 6</p>
+                </div>
+            </div>
+            
+            <p><strong>Solution in Bison:</strong></p>
+            <div class="code-block">
+                <pre>%left '+'  // Declares + as left-associative</pre>
+            </div>
+        </div>
+
+        <h2 id="compiler-structure">10. Complete Structure of the Minimal Compiler</h2>
+
+        <div class="flow-diagram">
+            <h3>Compilation Pipeline</h3>
+            <div style="display: flex; flex-direction: column; align-items: center;">
+                <div class="flow-step">Source File (test.c)</div>
+                <span class="arrow">↓</span>
+                <div class="flow-step">Lexical Analysis (scanner.l)<br><small>Tokens: INT, ID, NUM, operators</small></div>
+                <span class="arrow">↓</span>
+                <div class="flow-step">Syntax Analysis (parser.y)<br><small>Grammar checking & AST building</small></div>
+                <span class="arrow">↓</span>
+                <div class="flow-step">Abstract Syntax Tree<br><small>Hierarchical program representation</small></div>
+                <span class="arrow">↓</span>
+                <div class="flow-step">Semantic Analysis<br><small>Symbol table, type checking</small></div>
+                <span class="arrow">↓</span>
+                <div class="flow-step">TAC Generation<br><small>Three-address intermediate code</small></div>
+                <span class="arrow">↓</span>
+                <div class="flow-step">Optimization<br><small>Constant folding, copy propagation</small></div>
+                <span class="arrow">↓</span>
+                <div class="flow-step">Code Generation<br><small>MIPS assembly output</small></div>
+            </div>
+        </div>
+
+        <h3>Component Interactions</h3>
+
+        <table>
+            <tr>
+                <th>Component</th>
+                <th>Input</th>
+                <th>Output</th>
+                <th>Key Functions</th>
+            </tr>
+            <tr>
+                <td><strong>scanner.l</strong></td>
+                <td>Character stream</td>
+                <td>Token stream</td>
+                <td>yylex(), pattern matching</td>
+            </tr>
+            <tr>
+                <td><strong>parser.y</strong></td>
+                <td>Token stream</td>
+                <td>AST root</td>
+                <td>yyparse(), grammar rules</td>
+            </tr>
+            <tr>
+                <td><strong>ast.c</strong></td>
+                <td>Parser actions</td>
+                <td>AST nodes</td>
+                <td>createXXX() functions</td>
+            </tr>
+            <tr>
+                <td><strong>symtab.c</strong></td>
+                <td>Variable declarations</td>
+                <td>Symbol table entries</td>
+                <td>addVar(), getVarOffset()</td>
+            </tr>
+            <tr>
+                <td><strong>tac.c</strong></td>
+                <td>AST</td>
+                <td>TAC instructions</td>
+                <td>generateTAC(), optimizeTAC()</td>
+            </tr>
+            <tr>
+                <td><strong>codegen.c</strong></td>
+                <td>AST + Symbol Table</td>
+                <td>MIPS assembly</td>
+                <td>generateMIPS(), genExpr()</td>
+            </tr>
+            <tr>
+                <td><strong>main.c</strong></td>
+                <td>Command line args</td>
+                <td>Orchestration</td>
+                <td>main(), phase control</td>
+            </tr>
+        </table>
+
+        <h3>Data Flow Through the Compiler</h3>
+
+        <div class="example-box">
+            <h4>Complete Example: From Source to Assembly</h4>
+            
+            <p><strong>Input Program:</strong></p>
+            <div class="code-block">
+                <pre>int x;
+x = 10 + 5;
+print(x);</pre>
+            </div>
+            
+            <p><strong>Phase 1: Tokenization</strong></p>
+            <div class="code-block">
+                <pre>INT ID(x) ';'
+ID(x) '=' NUM(10) '+' NUM(5) ';'
+PRINT '(' ID(x) ')' ';'</pre>
+            </div>
+            
+            <p><strong>Phase 2: AST Construction</strong></p>
+            <div class="tree-structure">
+                <pre>
+STMT_LIST
+├── DECL("x")
+├── ASSIGN
+│   ├── var: "x"
+│   └── value: BINOP(+)
+│               ├── left: NUM(10)
+│               └── right: NUM(5)
+└── PRINT
+    └── expr: VAR("x")
+                </pre>
+            </div>
+            
+            <p><strong>Phase 3: Symbol Table Updates</strong></p>
+            <table>
+                <tr>
+                    <th>Action</th>
+                    <th>Symbol Table State</th>
+                </tr>
+                <tr>
+                    <td>Process DECL("x")</td>
+                    <td>[{name: "x", offset: 0}]</td>
+                </tr>
+                <tr>
+                    <td>Process ASSIGN (lookup "x")</td>
+                    <td>No change (lookup returns offset 0)</td>
+                </tr>
+                <tr>
+                    <td>Process PRINT (lookup "x")</td>
+                    <td>No change (lookup returns offset 0)</td>
+                </tr>
+            </table>
+            
+            <p><strong>Phase 4: TAC Generation</strong></p>
+            <div class="code-block">
+                <pre>1: DECL x
+2: t0 = 10 + 5
+3: x = t0
+4: PRINT x</pre>
+            </div>
+            
+            <p><strong>Phase 5: TAC Optimization</strong></p>
+            <div class="code-block">
+                <pre>1: DECL x
+2: x = 15      // Constant folding: 10 + 5 = 15
+3: PRINT 15    // Copy propagation: x = 15</pre>
+            </div>
+            
+            <p><strong>Phase 6: MIPS Assembly Generation</strong></p>
+            <div class="code-block">
+                <pre>.data
+
+.text
+.globl main
+main:
+    # Allocate stack space
+    addi $sp, $sp, -400
+    
+    # Declared x at offset 0
+    
+    # x = 15
+    li $t0, 15
+    sw $t0, 0($sp)
+    
+    # Print x (which is 15)
+    lw $t0, 0($sp)
+    move $a0, $t0
+    li $v0, 1
+    syscall
+    
+    # Print newline
+    li $v0, 11
+    li $a0, 10
+    syscall
+    
+    # Exit program
+    addi $sp, $sp, 400
+    li $v0, 10
+    syscall</pre>
+            </div>
+        </div>
+
+        <h2 id="practical-examples">11. Practical C-Minus Examples</h2>
+
+        <h3>Example 1: Variable Declaration and Assignment</h3>
+
+        <div class="example-box">
+            <div class="code-block">
+                <pre>int x;
+int y;
+x = 100;
+y = x;</pre>
+            </div>
+            
+            <p><strong>Key Concepts Demonstrated:</strong></p>
+            <ul>
+                <li>Multiple variable declarations</li>
+                <li>Literal assignment</li>
+                <li>Variable-to-variable assignment</li>
+            </ul>
+            
+            <p><strong>Symbol Table Evolution:</strong></p>
+            <ol>
+                <li>After line 1: x at offset 0</li>
+                <li>After line 2: y at offset 4</li>
+                <li>Lines 3-4: Lookups only, no new entries</li>
+            </ol>
+        </div>
+
+        <h3>Example 2: Expression Evaluation</h3>
+
+        <div class="example-box">
+            <div class="code-block">
+                <pre>int result;
+result = 10 + 20 + 30;</pre>
+            </div>
+            
+            <p><strong>AST for Expression:</strong></p>
+            <div class="tree-structure">
+                <pre>
+        ADD
+       /   \
+     ADD    30
+    /   \
+   10    20
+                </pre>
+            </div>
+            
+            <p><strong>TAC Generation:</strong></p>
+            <div class="code-block">
+                <pre>t0 = 10 + 20
+t1 = t0 + 30
+result = t1</pre>
+            </div>
+            
+            <p><strong>After Optimization:</strong></p>
+            <div class="code-block">
+                <pre>result = 60  // All constants folded</pre>
+            </div>
+        </div>
+
+        <h3>Example 3: Complex Expression with Variables</h3>
+
+        <div class="example-box">
+            <div class="code-block">
+                <pre>int a;
+int b;
+int c;
+a = 5;
+b = 10;
+c = a + b + 15;
+print(c);</pre>
+            </div>
+            
+            <p><strong>Complete Compilation Trace:</strong></p>
+            
+            <p><strong>1. Symbol Table:</strong></p>
+            <ul>
+                <li>a: offset 0</li>
+                <li>b: offset 4</li>
+                <li>c: offset 8</li>
+            </ul>
+            
+            <p><strong>2. Unoptimized TAC:</strong></p>
+            <div class="code-block">
+                <pre>DECL a
+DECL b
+DECL c
+a = 5
+b = 10
+t0 = a + b
+t1 = t0 + 15
+c = t1
+PRINT c</pre>
+            </div>
+            
+            <p><strong>3. Optimized TAC:</strong></p>
+            <div class="code-block">
+                <pre>DECL a
+DECL b
+DECL c
+a = 5
+b = 10
+c = 30     // Computed: 5 + 10 + 15
+PRINT 30   // Propagated value</pre>
+            </div>
+        </div>
+
+        <h3>Example 4: Error Cases</h3>
+
+        <div class="important-note">
+            Understanding error cases helps students debug their compilers.
+        </div>
+
+        <div class="example-box">
+            <h4>Semantic Errors Caught by Symbol Table</h4>
+            
+            <div class="code-block">
+                <pre>// Error 1: Undeclared variable
+x = 10;  // Error: 'x' not declared
+
+// Error 2: Redeclaration
+int y;
+int y;  // Error: 'y' already declared
+
+// Error 3: Undefined variable in expression
+int z;
+z = w + 1;  // Error: 'w' not declared</pre>
+            </div>
+            
+            <p><strong>How These Errors Are Detected:</strong></p>
+            <ul>
+                <li><strong>Undeclared:</strong> getVarOffset() returns -1</li>
+                <li><strong>Redeclaration:</strong> addVar() returns -1</li>
+                <li><strong>Undefined in expr:</strong> During TAC generation</li>
+            </ul>
+        </div>
+
+        <h2>12. Extensions and Improvements</h2>
+
+        <div class="theory-box">
+            <h3>Possible Student Extensions</h3>
+            
+            <p>This minimal compiler provides a foundation for many enhancements:</p>
+            
+            <h4>1. Additional Operators</h4>
+            <ul>
+                <li>Subtraction, multiplication, division</li>
+                <li>Comparison operators (&lt;, &gt;, ==)</li>
+                <li>Logical operators (&&, ||, !)</li>
+            </ul>
+            
+            <h4>2. Control Flow</h4>
+            <ul>
+                <li>If-else statements</li>
+                <li>While loops</li>
+                <li>For loops</li>
+            </ul>
+            
+            <h4>3. Advanced Features</h4>
+            <ul>
+                <li>Functions and procedures</li>
+                <li>Arrays</li>
+                <li>Multiple data types (float, char)</li>
+                <li>Nested scopes</li>
+            </ul>
+            
+            <h4>4. Optimization Improvements</h4>
+            <ul>
+                <li>Dead code elimination</li>
+                <li>Common subexpression elimination</li>
+                <li>Loop optimizations</li>
+                <li>Register allocation</li>
+            </ul>
+        </div>
+
+        <h2>13. Summary and Key Takeaways</h2>
+
+        <div class="important-note">
+            This minimal compiler demonstrates all essential phases of compilation in a clear, understandable way.
+        </div>
+
+        <h3>Key Learning Points</h3>
+
+        <ol>
+            <li><strong>Symbol Tables</strong> are essential for tracking variable information throughout compilation</li>
+            
+            <li><strong>ASTs</strong> provide a clean, hierarchical representation that's perfect for analysis and code generation</li>
+            
+            <li><strong>Bison</strong> handles the complex parsing algorithm, but students must:
+                <ul>
+                    <li>Define the grammar rules</li>
+                    <li>Write semantic actions</li>
+                    <li>Create AST node functions</li>
+                </ul>
+            </li>
+            
+            <li><strong>TAC</strong> serves as a bridge between high-level AST and low-level machine code</li>
+            
+            <li><strong>Optimization</strong> can dramatically improve generated code quality</li>
+            
+            <li><strong>Code Generation</strong> maps abstract concepts to concrete machine instructions</li>
+        </ol>
+
+        <h3>The Complete Picture</h3>
+
+        <div class="flow-diagram">
+            <p style="text-align: center; font-weight: bold;">From Source to Execution</p>
+            <div class="flow-step">C-Minus Source</div>
+            <span class="arrow">↓</span>
+            <div class="flow-step">Lexical Analysis<br><small>Character stream → Tokens</small></div>
+            <span class="arrow">↓</span>
+            <div class="flow-step">Syntax Analysis<br><small>Tokens → AST</small></div>
+            <span class="arrow">↓</span>
+            <div class="flow-step">Semantic Analysis<br><small>AST + Symbol Table</small></div>
+            <span class="arrow">↓</span>
+            <div class="flow-step">Intermediate Code<br><small>AST → TAC</small></div>
+            <span class="arrow">↓</span>
+            <div class="flow-step">Optimization<br><small>TAC → Optimized TAC</small></div>
+            <span class="arrow">↓</span>
+            <div class="flow-step">Code Generation<br><small>TAC → MIPS Assembly</small></div>
+            <span class="arrow">↓</span>
+            <div class="flow-step">Execution<br><small>Run on MIPS Simulator</small></div>
+        </div>
+
+        <div class="important-note">
+            Remember: This compiler focuses on the <strong>simplified subset</strong> of C-Minus used in this project (declarations, assignments, addition, print), not the full C-Minus language. This constraint makes the concepts clearer and the implementation manageable while still demonstrating all fundamental compiler techniques.
+        </div>
+
+        <h2>Appendix: Quick Reference</h2>
+
+        <h3>File Responsibilities</h3>
+
+        <table>
+            <tr>
+                <th>File</th>
+                <th>Purpose</th>
+                <th>Key Concepts</th>
+            </tr>
+            <tr>
+                <td><code>scanner.l</code></td>
+                <td>Tokenization</td>
+                <td>Regular expressions, DFA</td>
+            </tr>
+            <tr>
+                <td><code>parser.y</code></td>
+                <td>Grammar and parsing</td>
+                <td>CFG, LALR parsing, semantic actions</td>
+            </tr>
+            <tr>
+                <td><code>ast.c/h</code></td>
+                <td>AST management</td>
+                <td>Tree structures, node types</td>
+            </tr>
+            <tr>
+                <td><code>symtab.c/h</code></td>
+                <td>Symbol table</td>
+                <td>Hash tables, scope management</td>
+            </tr>
+            <tr>
+                <td><code>tac.c/h</code></td>
+                <td>Intermediate code</td>
+                <td>Three-address code, optimization</td>
+            </tr>
+            <tr>
+                <td><code>codegen.c/h</code></td>
+                <td>MIPS generation</td>
+                <td>Register allocation, instruction selection</td>
+            </tr>
+            <tr>
+                <td><code>main.c</code></td>
+                <td>Driver program</td>
+                <td>Compilation phases, orchestration</td>
+            </tr>
+        </table>
+
+        <h3>Common Commands</h3>
+
+        <div class="code-block">
+            <pre># Build the compiler
+make
+
+# Run a test
+./minicompiler test.c output.s
+
+# Clean build files
+make clean
+
+# Run with test output
+make test</pre>
+        </div>
+
+        <div style="text-align: center; margin-top: 50px; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 10px;">
+            <h2 style="color: white; border: none;">End of Document</h2>
+            <p>This comprehensive guide covers all aspects of the minimal C-Minus compiler implementation, from theory to practice.</p>
+        </div>
+    </div>
+</body>
+</html>
