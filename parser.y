@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "ast.h"
+#include "symtab.h"
 
 /* External declarations for lexer interface */
 extern int yylex();      /* Get next token from scanner */
@@ -31,13 +32,15 @@ ASTNode* root = NULL;          /* Root of the Abstract Syntax Tree */
 /* TOKEN DECLARATIONS with their semantic value types */
 %token <num> NUM        /* Number token carries an integer value */
 %token <str> ID         /* Identifier token carries a string */
-%token INT PRINT        /* Keywords have no semantic value */
+%token INT PRINT FLOAT  /* Keywords have no semantic value */
+%token '+' '-' '*' '/' '%'
 
 /* NON-TERMINAL TYPES - Define what type each grammar rule returns */
 %type <node> program stmt_list stmt decl assign expr print_stmt
 
 /* OPERATOR PRECEDENCE AND ASSOCIATIVITY */
-%left '+'  /* Addition is left-associative: a+b+c = (a+b)+c */
+%left '+' '-' /* Addition is left-associative: a+b+c = (a+b)+c */
+%left '*' '/'
 
 %%
 
@@ -74,8 +77,32 @@ stmt:
 decl:
     INT ID ';' { 
         /* Create declaration node and free the identifier string */
-        $$ = createDecl($2);  /* $2 is the ID token's string value */
+        $$ = createDecl($2, "int");  /* $2 is the ID token's string value */
+        /* Add variable to symbol table */
+        /*
+          - use function in symtab.c to add variable
+          - print the update symbol table for verification
+
+        */
+
+        addVar($2, "int");
         free($2);             /* Free the string copy from scanner */
+        printSymTab();
+    }
+    | FLOAT ID ';' { 
+        /* Create declaration node and free the identifier string */
+        $$ = createDecl($2, "float");  /* $2 is the ID token's string value */
+
+        /* Add variable to symbol table */
+        /*
+          - use function in symtab.c to add variable
+          - print the update symbol table for verification
+
+        */
+
+        addVar($2, "float");
+        free($2);             /* Free the string copy from scanner */
+        printSymTab();
     }
     ;
 
@@ -102,6 +129,18 @@ expr:
     | expr '+' expr { 
         /* Addition operation - builds binary tree */
         $$ = createBinOp('+', $1, $3);  /* Left child, op, right child */
+    }
+    | expr '-' expr { 
+        /* Subtraction operation - builds binary tree */
+        $$ = createBinOp('-', $1, $3);  /* Left child, op, right child */
+    }
+    | expr '*' expr { 
+        /* Multiplication operation - builds binary tree */
+        $$ = createBinOp('*', $1, $3);  /* Left child, op, right child */
+    }
+    | expr '/' expr { 
+        /* Division operation - builds binary tree */
+        $$ = createBinOp('/', $1, $3);  /* Left child, op, right child */
     }
     ;
 
