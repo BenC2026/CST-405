@@ -1,6 +1,9 @@
 int x;
 int y;
 int z;
+float a;
+float b;
+float c;
 
 x = 10;
 y = 20;
@@ -12,3 +15,12 @@ print(x);
 
 y = x + y + z;
 print(y);
+
+a = x - y;
+print(a);
+
+b = a * z;
+print(b);
+
+c = b / a;
+print(c);
