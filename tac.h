@@ -12,6 +12,9 @@
 /* TAC INSTRUCTION TYPES */
 typedef enum {
     TAC_ADD,     /* Addition: result = arg1 + arg2 */
+    TAC_SUB,     /* Subtraction: result = arg1 - arg2 */
+    TAC_MUL,     /* Multiplication: result = arg1 * arg2 */
+    TAC_DIV,     /* Division: result = arg1 / arg2 */
     TAC_ASSIGN,  /* Assignment: result = arg1 */
     TAC_PRINT,   /* Print: print(arg1) */
     TAC_DECL     /* Declaration: declare result */
@@ -45,5 +48,7 @@ char* generateTACExpr(ASTNode* node);                             /* Generate TA
 void printTAC();                                                   /* Display unoptimized TAC */
 void optimizeTAC();                                                /* Apply optimizations */
 void printOptimizedTAC();                                          /* Display optimized TAC */
+void saveTACToFile(const char* filename);                         /* Save unoptimized TAC to file */
+void saveOptimizedTACToFile(const char* filename);                /* Save optimized TAC to file */
 
 #endif
