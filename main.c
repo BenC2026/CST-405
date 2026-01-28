@@ -7,10 +7,15 @@
 #include "ast.h"
 #include "codegen.h"
 #include "tac.h"
+#include "semantic.h"
+#include "symtab.h"
 
 extern int yyparse();
 extern FILE* yyin;
 extern ASTNode* root;
+
+/* Global flag to enable token display in lexer */
+int displayTokens = 1;
 
 int main(int argc, char* argv[]) {
     if (argc != 3) {
@@ -40,9 +45,10 @@ int main(int argc, char* argv[]) {
     printf("│ • Parsing grammar rules (parser.y)\n");
     printf("│ • Building Abstract Syntax Tree\n");
     printf("└──────────────────────────────────────────────────────────┘\n");
-    
+    printf("\nTokens recognized:\n");
+
     if (yyparse() == 0) {
-        printf("✓ Parse successful - program is syntactically correct!\n\n");
+        printf("\n✓ Parse successful - program is syntactically correct!\n\n");
         
         /* PHASE 2: AST Display */
         printf("┌──────────────────────────────────────────────────────────┐\n");
@@ -52,10 +58,27 @@ int main(int argc, char* argv[]) {
         printf("└──────────────────────────────────────────────────────────┘\n");
         printAST(root, 0);
         printf("\n");
-        
-        /* PHASE 3: Intermediate Code */
+
+        /* PHASE 3: Semantic Analysis */
         printf("┌──────────────────────────────────────────────────────────┐\n");
-        printf("│ PHASE 3: INTERMEDIATE CODE GENERATION                    │\n");
+        printf("│ PHASE 3: SEMANTIC ANALYSIS                               │\n");
+        printf("├──────────────────────────────────────────────────────────┤\n");
+        printf("│ Checking semantic correctness:                           │\n");
+        printf("│ • Variables declared before use                          │\n");
+        printf("│ • No duplicate declarations                              │\n");
+        printf("│ • Type consistency (for future extensions)               │\n");
+        printf("└──────────────────────────────────────────────────────────┘\n");
+        initSemantic();
+        if (!analyzeProgram(root)) {
+            printf("\n✗ Compilation failed due to semantic errors!\n");
+            fclose(yyin);
+            return 1;
+        }
+        printf("\n");
+
+        /* PHASE 4: Intermediate Code */
+        printf("┌──────────────────────────────────────────────────────────┐\n");
+        printf("│ PHASE 4: INTERMEDIATE CODE GENERATION                    │\n");
         printf("├──────────────────────────────────────────────────────────┤\n");
         printf("│ Three-Address Code (TAC) - simplified instructions:      │\n");
         printf("│ • Each instruction has at most 3 operands                │\n");
@@ -64,11 +87,16 @@ int main(int argc, char* argv[]) {
         initTAC();
         generateTAC(root);
         printTAC();
-        printf("\n");
-        
-        /* PHASE 4: Optimization */
+
+        // Save TAC to file
+        char tacFile[256];
+        sprintf(tacFile, "%s.tac", argv[1]);
+        saveTACToFile(tacFile);
+        printf("✓ TAC saved to: %s\n\n", tacFile);
+
+        /* PHASE 5: Optimization */
         printf("┌──────────────────────────────────────────────────────────┐\n");
-        printf("│ PHASE 4: CODE OPTIMIZATION                               │\n");
+        printf("│ PHASE 5: CODE OPTIMIZATION                               │\n");
         printf("├──────────────────────────────────────────────────────────┤\n");
         printf("│ Applying optimizations:                                  │\n");
         printf("│ • Constant folding (evaluate compile-time expressions)   │\n");
@@ -76,11 +104,16 @@ int main(int argc, char* argv[]) {
         printf("└──────────────────────────────────────────────────────────┘\n");
         optimizeTAC();
         printOptimizedTAC();
-        printf("\n");
-        
-        /* PHASE 5: Code Generation */
+
+        // Save optimized TAC to file
+        char optTacFile[256];
+        sprintf(optTacFile, "%s.opt.tac", argv[1]);
+        saveOptimizedTACToFile(optTacFile);
+        printf("✓ Optimized TAC saved to: %s\n\n", optTacFile);
+
+        /* PHASE 6: Code Generation */
         printf("┌──────────────────────────────────────────────────────────┐\n");
-        printf("│ PHASE 5: MIPS CODE GENERATION                            │\n");
+        printf("│ PHASE 6: MIPS CODE GENERATION                            │\n");
         printf("├──────────────────────────────────────────────────────────┤\n");
         printf("│ Translating to MIPS assembly:                            │\n");
         printf("│ • Variables stored on stack                              │\n");
