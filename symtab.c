@@ -20,7 +20,7 @@ void initSymTab() {
 }
 
 /* Add a new variable to the symbol table */
-int addVar(char* name) {
+int addVar(char* name, char* type) {
     /* Check for duplicate declaration */
     if (isVarDeclared(name)) {
         printf("SYMBOL TABLE: Failed to add '%s' - already declared\n", name);
@@ -29,6 +29,7 @@ int addVar(char* name) {
 
     /* Add new symbol entry */
     symtab.vars[symtab.count].name = strdup(name);
+    symtab.vars[symtab.count].type = strdup(type);
     symtab.vars[symtab.count].offset = symtab.nextOffset;
 
     /* Advance offset by 4 bytes (size of int in MIPS) */
@@ -69,7 +70,7 @@ void printSymTab() {
     } else {
         printf("Variables:\n");
         for (int i = 0; i < symtab.count; i++) {
-            printf("  [%d] %s -> offset %d\n", i, symtab.vars[i].name, symtab.vars[i].offset);
+            printf("  [%d] %s (%s) -> offset %d\n", i, symtab.vars[i].name, symtab.vars[i].type, symtab.vars[i].offset);
         }
     }
     printf("==========================\n\n");
