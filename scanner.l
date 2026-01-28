@@ -25,6 +25,7 @@
 
 "int"           { return INT; }
 "print"         { return PRINT; }
+"float"         { return FLOAT; }
 
 [a-zA-Z_][a-zA-Z0-9_]* { 
     yylval.str = strdup(yytext);
@@ -45,6 +46,8 @@
 ";"             { return ';'; }
 "("             { return '('; }
 ")"             { return ')'; }
+"/*"           { return "/*"; }
+"*/"           { return "*/"; }
 
 [ \t\n]         { }
 
