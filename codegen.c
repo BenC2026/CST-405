@@ -21,9 +21,9 @@ void genExpr(ASTNode* node) {
             break;
             
         case NODE_VAR: {
-            int offset = getVarOffset(node->data.name);
+            int offset = getVarOffset(node->data.decl.name);
             if (offset == -1) {
-                fprintf(stderr, "Error: Variable %s not declared\n", node->data.name);
+                fprintf(stderr, "Error: Variable %s not declared\n", node->data.decl.name);
                 exit(1);
             }
             fprintf(output, "    lw $t%d, %d($sp)\n", getNextTemp(), offset);
@@ -35,8 +35,22 @@ void genExpr(ASTNode* node) {
             int leftReg = tempReg - 1;
             genExpr(node->data.binop.right);
             int rightReg = tempReg - 1;
-            fprintf(output, "    add $t%d, $t%d, $t%d\n", leftReg, leftReg, rightReg);
-            tempReg = leftReg + 1;
+            if (node->data.binop.op == '+') {
+                fprintf(output, "    add $t%d, $t%d, $t%d\n", leftReg, leftReg, rightReg);
+                tempReg = leftReg + 1;
+            }
+            if (node->data.binop.op == '-') {
+                fprintf(output, "    sub $t%d, $t%d, $t%d\n", leftReg, leftReg, rightReg);
+                tempReg = leftReg + 1;
+            }
+            if (node->data.binop.op == '*') {
+                fprintf(output, "    mul $t%d, $t%d, $t%d\n", leftReg, leftReg, rightReg);
+                tempReg = leftReg + 1;
+            }
+            if (node->data.binop.op == '/') {
+                fprintf(output, "    div $t%d, $t%d, $t%d\n", leftReg, leftReg, rightReg);
+                tempReg = leftReg + 1;
+            }
             break;
             
         default:
@@ -49,12 +63,12 @@ void genStmt(ASTNode* node) {
     
     switch(node->type) {
         case NODE_DECL: {
-            int offset = addVar(node->data.name);
+            int offset = addVar(node->data.decl.name, node->data.decl.type);
             if (offset == -1) {
-                fprintf(stderr, "Error: Variable %s already declared\n", node->data.name);
+                fprintf(stderr, "Error: Variable %s already declared\n", node->data.decl.name);
                 exit(1);
             }
-            fprintf(output, "    # Declared %s at offset %d\n", node->data.name, offset);
+            fprintf(output, "    # Declared %s at offset %d\n", node->data.decl.name, offset);
             break;
         }
         
