@@ -60,7 +60,7 @@ char* generateTACExpr(ASTNode* node) {
         }
         
         case NODE_VAR:
-            return strdup(node->data.name);
+            return strdup(node->data.decl.name);
         
         case NODE_BINOP: {
             char* left = generateTACExpr(node->data.binop.left);
@@ -69,6 +69,18 @@ char* generateTACExpr(ASTNode* node) {
             
             if (node->data.binop.op == '+') {
                 appendTAC(createTAC(TAC_ADD, left, right, temp));
+            }
+
+            if (node->data.binop.op == '-') {
+                appendTAC(createTAC(TAC_SUB, left, right, temp));
+            }
+
+            if (node->data.binop.op == '*') {
+                appendTAC(createTAC(TAC_MUL, left, right, temp));
+            }
+
+            if (node->data.binop.op == '/') {
+                appendTAC(createTAC(TAC_DIV, left, right, temp));
             }
             
             return temp;
@@ -84,7 +96,7 @@ void generateTAC(ASTNode* node) {
     
     switch(node->type) {
         case NODE_DECL:
-            appendTAC(createTAC(TAC_DECL, NULL, NULL, node->data.name));
+            appendTAC(createTAC(TAC_DECL, NULL, NULL, node->data.decl.name));
             break;
             
         case NODE_ASSIGN: {
@@ -125,6 +137,18 @@ void printTAC() {
                 printf("%s = %s + %s", curr->result, curr->arg1, curr->arg2);
                 printf("     // Add: store result in %s\n", curr->result);
                 break;
+            case TAC_SUB:
+                printf("%s = %s - %s", curr->result, curr->arg1, curr->arg2);
+                printf("     // Subtract: store result in %s\n", curr->result);
+                break;
+            case TAC_MUL:
+                printf("%s = %s * %s", curr->result, curr->arg1, curr->arg2);
+                printf("     // Multiply: store result in %s\n", curr->result);
+                break;
+            case TAC_DIV:
+                printf("%s = %s / %s", curr->result, curr->arg1, curr->arg2);
+                printf("     // Divide: store result in %s\n", curr->result);
+                break;
             case TAC_ASSIGN:
                 printf("%s = %s", curr->result, curr->arg1);
                 printf("           // Assign value to %s\n", curr->result);
@@ -142,7 +166,43 @@ void printTAC() {
 
 // Simple optimization: constant folding and copy propagation
 void optimizeTAC() {
+    // === DEAD CODE ELIMINATION: First pass - find all used variables ===
+    char* usedVars[100];
+    int usedCount = 0;
+    
     TACInstr* curr = tacList.head;
+    while (curr) {
+        // arg1 and arg2 are "uses" of variables
+        if (curr->arg1 && !isdigit(curr->arg1[0])) {
+            // Check if already in usedVars
+            int found = 0;
+            for (int i = 0; i < usedCount; i++) {
+                if (strcmp(usedVars[i], curr->arg1) == 0) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) {
+                usedVars[usedCount++] = curr->arg1;
+            }
+        }
+        if (curr->arg2 && !isdigit(curr->arg2[0])) {
+            int found = 0;
+            for (int i = 0; i < usedCount; i++) {
+                if (strcmp(usedVars[i], curr->arg2) == 0) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) {
+                usedVars[usedCount++] = curr->arg2;
+            }
+        }
+        curr = curr->next;
+    }
+    
+    // === Second pass: copy propagation + constant folding + dead code elimination ===
+    curr = tacList.head;
     
     // Copy propagation table
     typedef struct {
@@ -156,16 +216,35 @@ void optimizeTAC() {
     while (curr) {
         TACInstr* newInstr = NULL;
         
+        // Dead code elimination: skip if result is never used
+        // (but keep PRINT and DECL)
+        if (curr->result && curr->op != TAC_DECL) {
+            int isUsed = 0;
+            for (int i = 0; i < usedCount; i++) {
+                if (strcmp(usedVars[i], curr->result) == 0) {
+                    isUsed = 1;
+                    break;
+                }
+            }
+            if (!isUsed && curr->op != TAC_PRINT) {
+                curr = curr->next;
+                continue;  // Skip this dead instruction
+            }
+        }
+        
         switch(curr->op) {
+            // ... rest of your existing switch cases ...
             case TAC_DECL:
                 newInstr = createTAC(TAC_DECL, NULL, NULL, curr->result);
                 break;
                 
-            case TAC_ADD: {
+            case TAC_ADD:
+            case TAC_SUB:
+            case TAC_MUL:
+            case TAC_DIV: {
                 // Check if both operands are constants
                 char* left = curr->arg1;
                 char* right = curr->arg2;
-                
                 // Look up values in propagation table (search from most recent)
                 for (int i = valueCount - 1; i >= 0; i--) {
                     if (strcmp(values[i].var, left) == 0) {
@@ -197,7 +276,6 @@ void optimizeTAC() {
                 }
                 break;
             }
-            
             case TAC_ASSIGN: {
                 char* value = curr->arg1;
                 
@@ -213,11 +291,9 @@ void optimizeTAC() {
                 values[valueCount].var = strdup(curr->result);
                 values[valueCount].value = strdup(value);
                 valueCount++;
-                
                 newInstr = createTAC(TAC_ASSIGN, value, NULL, curr->result);
                 break;
             }
-            
             case TAC_PRINT: {
                 char* value = curr->arg1;
                 
@@ -257,6 +333,18 @@ void printOptimizedTAC() {
                 printf("%s = %s + %s", curr->result, curr->arg1, curr->arg2);
                 printf("     // Runtime addition needed\n");
                 break;
+            case TAC_SUB:
+                printf("%s = %s - %s", curr->result, curr->arg1, curr->arg2);
+                printf("     // Runtime subtraction needed\n");
+                break;
+            case TAC_MUL:
+                printf("%s = %s * %s", curr->result, curr->arg1, curr->arg2);
+                printf("     // Runtime multiplication needed\n");
+                break;
+            case TAC_DIV:
+                printf("%s = %s / %s", curr->result, curr->arg1, curr->arg2);
+                printf("     // Runtime division needed\n");
+                break;
             case TAC_ASSIGN:
                 printf("%s = %s", curr->result, curr->arg1);
                 // Check if it's a constant
@@ -280,4 +368,97 @@ void printOptimizedTAC() {
         }
         curr = curr->next;
     }
+}
+
+void saveTACToFile(const char* filename) {
+    FILE* file = fopen(filename, "w");
+    if (!file) {
+        fprintf(stderr, "Error: Cannot open file '%s' for writing\n", filename);
+        return;
+    }
+
+    fprintf(file, "# Three-Address Code (TAC) - Unoptimized\n");
+    fprintf(file, "# Generated by Minimal C Compiler\n");
+    fprintf(file, "# ─────────────────────────────────────\n\n");
+
+    TACInstr* curr = tacList.head;
+    int lineNum = 1;
+    while (curr) {
+        fprintf(file, "%2d: ", lineNum++);
+        switch(curr->op) {
+            case TAC_DECL:
+                fprintf(file, "DECL %s\n", curr->result);
+                break;
+            case TAC_ADD:
+                fprintf(file, "%s = %s + %s\n", curr->result, curr->arg1, curr->arg2);
+                break;
+            case TAC_SUB:
+                fprintf(file, "%s = %s - %s\n", curr->result, curr->arg1, curr->arg2);
+                break;
+            case TAC_MUL:
+                fprintf(file, "%s = %s * %s\n", curr->result, curr->arg1, curr->arg2);
+                break;
+            case TAC_DIV:
+                fprintf(file, "%s = %s / %s\n", curr->result, curr->arg1, curr->arg2);
+                break;
+            case TAC_ASSIGN:
+                fprintf(file, "%s = %s\n", curr->result, curr->arg1);
+                break;
+            case TAC_PRINT:
+                fprintf(file, "PRINT %s\n", curr->arg1);
+                break;
+            default:
+                break;
+        }
+        curr = curr->next;
+    }
+
+    fclose(file);
+}
+
+void saveOptimizedTACToFile(const char* filename) {
+    FILE* file = fopen(filename, "w");
+    if (!file) {
+        fprintf(stderr, "Error: Cannot open file '%s' for writing\n", filename);
+        return;
+    }
+
+    fprintf(file, "# Three-Address Code (TAC) - Optimized\n");
+    fprintf(file, "# Generated by Minimal C Compiler\n");
+    fprintf(file, "# Optimizations applied: Constant folding, Copy propagation\n");
+    fprintf(file, "# ─────────────────────────────────────\n\n");
+
+    TACInstr* curr = optimizedList.head;
+    int lineNum = 1;
+    while (curr) {
+        fprintf(file, "%2d: ", lineNum++);
+        switch(curr->op) {
+            case TAC_DECL:
+                fprintf(file, "DECL %s\n", curr->result);
+                break;
+            case TAC_ADD:
+                fprintf(file, "%s = %s + %s\n", curr->result, curr->arg1, curr->arg2);
+                break;
+            case TAC_SUB:
+                fprintf(file, "%s = %s - %s\n", curr->result, curr->arg1, curr->arg2);
+                break;
+            case TAC_MUL:
+                fprintf(file, "%s = %s * %s\n", curr->result, curr->arg1, curr->arg2);
+                break;
+            case TAC_DIV:
+                fprintf(file, "%s = %s / %s\n", curr->result, curr->arg1, curr->arg2);
+                break;
+            case TAC_ASSIGN:
+                fprintf(file, "%s = %s\n", curr->result, curr->arg1);
+                break;
+            case TAC_PRINT:
+                fprintf(file, "PRINT %s\n", curr->arg1);
+                break;
+            default:
+                break;
+        }
+        curr = curr->next;
+    }
+
+    fclose(file);
 }
