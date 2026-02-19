@@ -1,160 +1,313 @@
 %{
-/* SYNTAX ANALYZER (PARSER)
+/* SYNTAX ANALYZER (PARSER) - WITH FUNCTION SUPPORT
  * This is the second phase of compilation - checking grammar rules
  * Bison generates a parser that builds an Abstract Syntax Tree (AST)
- * The parser uses tokens from the scanner to verify syntax is correct
+ * Now supports functions, control flow, and more operators
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "ast.h"
-#include "symtab.h"
 
 /* External declarations for lexer interface */
-extern int yylex();      /* Get next token from scanner */
-extern int yyparse();    /* Parse the entire input */
-extern FILE* yyin;       /* Input file handle */
+extern int yylex();
+extern int yyparse();
+extern FILE* yyin;
+extern int yylineno;  /* Line number from scanner */
 
-void yyerror(const char* s);  /* Error handling function */
-ASTNode* root = NULL;          /* Root of the Abstract Syntax Tree */
+void yyerror(const char* s);
+ASTNode* root = NULL;
 %}
 
-/* SEMANTIC VALUES UNION
- * Defines possible types for tokens and grammar symbols
- * This allows different grammar rules to return different data types
- */
+/* SEMANTIC VALUES UNION */
 %union {
-    int num;                /* For integer literals */
-    char* str;              /* For identifiers */
-    struct ASTNode* node;   /* For AST nodes */
+    int num;
+    char* str;
+    struct ASTNode* node;
 }
 
-/* TOKEN DECLARATIONS with their semantic value types */
-%token <num> NUM        /* Number token carries an integer value */
-%token <str> ID         /* Identifier token carries a string */
-%token INT PRINT FLOAT  /* Keywords have no semantic value */
-%token '+' '-' '*' '/' '%'
+/* TOKEN DECLARATIONS */
+%token <num> NUM
+%token <str> ID
+%token INT FLOAT PRINT RETURN IF ELSE WHILE
+%token LE GE EQ NE
 
-/* NON-TERMINAL TYPES - Define what type each grammar rule returns */
-%type <node> program stmt_list stmt decl assign expr print_stmt
+/* NON-TERMINAL TYPES */
+%type <node> program decl_or_func_list decl_or_func
+%type <node> func_def params param_list param
+%type <node> stmt_list stmt decl assign expr print_stmt return_stmt
+%type <node> if_stmt while_stmt block
+%type <node> func_call arg_list args
 
 /* OPERATOR PRECEDENCE AND ASSOCIATIVITY */
-%left '+' '-' /* Addition is left-associative: a+b+c = (a+b)+c */
+%left EQ NE
+%left '<' '>' LE GE
+%left '+' '-'
 %left '*' '/'
+%right UMINUS
 
 %%
 
-/* GRAMMAR RULES - Define the structure of our language */
-
-/* PROGRAM RULE - Entry point of our grammar */
+/* PROGRAM RULE - Entry point */
 program:
-    stmt_list { 
-        /* Action: Save the statement list as our AST root */
-        root = $1;  /* $1 refers to the first symbol (stmt_list) */
+    decl_or_func_list {
+        root = $1;
     }
     ;
 
-/* STATEMENT LIST - Handles multiple statements */
+/* Declaration or function list */
+decl_or_func_list:
+    decl_or_func {
+        $$ = $1;
+    }
+    | decl_or_func_list decl_or_func {
+        $$ = createStmtList($1, $2);
+    }
+    ;
+
+/* Can be either a function definition or a variable declaration */
+decl_or_func:
+    func_def { $$ = $1; }
+    | decl { $$ = $1; }
+    ;
+
+/* FUNCTION DEFINITION - int name(params) { body } */
+func_def:
+    INT ID '(' params ')' block {
+        $$ = createFuncDef($2, $4, $6);
+        free($2);
+    }
+    | FLOAT ID '(' params ')' block {
+        $$ = createFuncDef($2, $4, $6);
+        free($2);
+    }
+    | INT ID '(' ')' block {
+        $$ = createFuncDef($2, NULL, $5);
+        free($2);
+    }
+    | FLOAT ID '(' ')' block {
+        $$ = createFuncDef($2, NULL, $5);
+        free($2);
+    }
+    | INT ID '[' ']' '(' params ')' block {
+        $$ = createFuncDef($2, $6, $8);
+        free($2);
+    }
+    | INT ID '[' ']' '(' ')' block {
+        $$ = createFuncDef($2, NULL, $7);
+        free($2);
+    }
+    ;
+
+/* PARAMETERS */
+params:
+    param_list { $$ = $1; }
+    ;
+
+param_list:
+    param {
+        $$ = $1;
+    }
+    | param_list ',' param {
+        $$ = createParamList($1, $3);
+    }
+    ;
+
+param:
+    INT ID {
+        $$ = createParam($2);
+        free($2);
+    }
+    | FLOAT ID {
+        $$ = createParam($2);
+        free($2);
+    }
+    | INT ID '[' ']' {
+        $$ = createParam($2);
+        free($2);
+    }
+    ;
+
+/* BLOCK STATEMENT */
+block:
+    '{' stmt_list '}' {
+        $$ = createBlock($2);
+    }
+    | '{' '}' {
+        $$ = createBlock(NULL);
+    }
+    ;
+
+/* STATEMENT LIST */
 stmt_list:
-    stmt { 
-        /* Base case: single statement */
-        $$ = $1;  /* Pass the statement up as-is */
+    stmt {
+        $$ = $1;
     }
-    | stmt_list stmt { 
-        /* Recursive case: list followed by another statement */
-        $$ = createStmtList($1, $2);  /* Build linked list of statements */
+    | stmt_list stmt {
+        $$ = createStmtList($1, $2);
     }
     ;
 
-/* STATEMENT TYPES - The three kinds of statements we support */
+/* STATEMENT TYPES */
 stmt:
-    decl        /* Variable declaration */
-    | assign    /* Assignment statement */
-    | print_stmt /* Print statement */
+    decl
+    | assign
+    | print_stmt
+    | return_stmt
+    | if_stmt
+    | while_stmt
+    | block
+    | func_call ';' { $$ = $1; }
     ;
 
-/* DECLARATION RULE - "int x;" */
+/* DECLARATION - int x; */
 decl:
-    INT ID ';' { 
-        /* Create declaration node and free the identifier string */
-        $$ = createDecl($2, "int");  /* $2 is the ID token's string value */
-        /* Add variable to symbol table */
-        /*
-          - use function in symtab.c to add variable
-          - print the update symbol table for verification
-
-        */
-
+    INT ID ';' {
+        $$ = createDecl($2, "int");
         addVar($2, "int");
-        free($2);             /* Free the string copy from scanner */
-        printSymTab();
+        free($2);
     }
-    | FLOAT ID ';' { 
-        /* Create declaration node and free the identifier string */
-        $$ = createDecl($2, "float");  /* $2 is the ID token's string value */
-
-        /* Add variable to symbol table */
-        /*
-          - use function in symtab.c to add variable
-          - print the update symbol table for verification
-
-        */
-
+    | FLOAT ID ';' {
+        $$ = createDecl($2, "float");
         addVar($2, "float");
-        free($2);             /* Free the string copy from scanner */
-        printSymTab();
+        free($2);
+    }
+    | INT ID '[' NUM ']' ';' {
+        $$ = createArrayDecl($2, "int", $4);
+        addArrayVar($2, "int", $4);
+        free($2);
     }
     ;
 
-/* ASSIGNMENT RULE - "x = expr;" */
+/* ASSIGNMENT - x = expr; */
 assign:
-    ID '=' expr ';' { 
-        /* Create assignment node with variable name and expression */
-        $$ = createAssign($1, $3);  /* $1 = ID, $3 = expr */
-        free($1);                   /* Free the identifier string */
+    ID '=' expr ';' {
+        $$ = createAssign($1, $3);
+        free($1);
+    }
+    | ID '[' expr ']' '=' expr ';' {
+        $$ = createArrayAssign($1, $3, $6);
+        free($1);
     }
     ;
 
-/* EXPRESSION RULES - Build expression trees */
+/* RETURN STATEMENT */
+return_stmt:
+    RETURN expr ';' {
+        $$ = createReturn($2);
+    }
+    | RETURN ';' {
+        $$ = createReturn(NULL);
+    }
+    ;
+
+/* IF STATEMENT */
+if_stmt:
+    IF '(' expr ')' stmt {
+        $$ = createIf($3, $5, NULL);
+    }
+    | IF '(' expr ')' stmt ELSE stmt {
+        $$ = createIf($3, $5, $7);
+    }
+    ;
+
+/* WHILE LOOP */
+while_stmt:
+    WHILE '(' expr ')' stmt {
+        $$ = createWhile($3, $5);
+    }
+    ;
+
+/* EXPRESSION RULES */
 expr:
-    NUM { 
-        /* Literal number */
-        $$ = createNum($1);  /* Create leaf node with number value */
+    NUM {
+        $$ = createNum($1);
     }
-    | ID { 
-        /* Variable reference */
-        $$ = createVar($1);  /* Create leaf node with variable name */
-        free($1);            /* Free the identifier string */
+    | ID {
+        $$ = createVar($1);
+        free($1);
     }
-    | expr '+' expr { 
-        /* Addition operation - builds binary tree */
-        $$ = createBinOp('+', $1, $3);  /* Left child, op, right child */
+    | ID '[' expr ']' {
+        $$ = createArrayAccess($1, $3);
+        free($1);
     }
-    | expr '-' expr { 
-        /* Subtraction operation - builds binary tree */
-        $$ = createBinOp('-', $1, $3);  /* Left child, op, right child */
+    | func_call {
+        $$ = $1;
     }
-    | expr '*' expr { 
-        /* Multiplication operation - builds binary tree */
-        $$ = createBinOp('*', $1, $3);  /* Left child, op, right child */
+    | expr '+' expr {
+        $$ = createBinOp('+', $1, $3);
     }
-    | expr '/' expr { 
-        /* Division operation - builds binary tree */
-        $$ = createBinOp('/', $1, $3);  /* Left child, op, right child */
+    | expr '-' expr {
+        $$ = createBinOp('-', $1, $3);
+    }
+    | expr '*' expr {
+        $$ = createBinOp('*', $1, $3);
+    }
+    | expr '/' expr {
+        $$ = createBinOp('/', $1, $3);
+    }
+    | expr '<' expr {
+        $$ = createBinOp('<', $1, $3);
+    }
+    | expr '>' expr {
+        $$ = createBinOp('>', $1, $3);
+    }
+    | expr LE expr {
+        $$ = createBinOp('l', $1, $3);  /* 'l' for <= */
+    }
+    | expr GE expr {
+        $$ = createBinOp('g', $1, $3);  /* 'g' for >= */
+    }
+    | expr EQ expr {
+        $$ = createBinOp('e', $1, $3);  /* 'e' for == */
+    }
+    | expr NE expr {
+        $$ = createBinOp('n', $1, $3);  /* 'n' for != */
+    }
+    | '-' expr %prec UMINUS {
+        $$ = createBinOp('u', $2, NULL);  /* 'u' for unary minus */
+    }
+    | '(' expr ')' {
+        $$ = $2;
     }
     ;
 
-/* PRINT STATEMENT - "print(expr);" */
+/* FUNCTION CALL */
+func_call:
+    ID '(' args ')' {
+        $$ = createFuncCall($1, $3);
+        free($1);
+    }
+    | ID '(' ')' {
+        $$ = createFuncCall($1, NULL);
+        free($1);
+    }
+    ;
+
+/* ARGUMENTS */
+args:
+    arg_list { $$ = $1; }
+    ;
+
+arg_list:
+    expr {
+        $$ = $1;  /* Single argument becomes the arg node */
+    }
+    | arg_list ',' expr {
+        $$ = createArgList($1, $3);
+    }
+    ;
+
+/* PRINT STATEMENT */
 print_stmt:
-    PRINT '(' expr ')' ';' { 
-        /* Create print node with expression to print */
-        $$ = createPrint($3);  /* $3 is the expression inside parens */
+    PRINT '(' expr ')' ';' {
+        $$ = createPrint($3);
     }
     ;
 
 %%
 
-/* ERROR HANDLING - Called by Bison when syntax error detected */
+/* ERROR HANDLING */
 void yyerror(const char* s) {
-    fprintf(stderr, "Syntax Error: %s\n", s);
+    fprintf(stderr, "Syntax Error at line %d: %s\n", yylineno, s);
 }
