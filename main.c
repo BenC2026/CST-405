@@ -4,18 +4,62 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "ast.h"
+#include "semantic.h"
 #include "codegen.h"
 #include "tac.h"
-#include "semantic.h"
+#include "benchmark.c"
 #include "symtab.h"
 
 extern int yyparse();
 extern FILE* yyin;
 extern ASTNode* root;
 
-/* Global flag to enable token display in lexer */
-int displayTokens = 1;
+/* Helper function to generate TAC filenames from output filename */
+void getTACFilename(const char* outputFile, char* tacFile, char* optimizedTacFile) {
+    // Find the last dot in the filename
+    const char* dot = strrchr(outputFile, '.');
+    const char* slash = strrchr(outputFile, '/');
+
+    if (dot && (!slash || dot > slash)) {
+        // Copy everything before the extension
+        int baseLen = dot - outputFile;
+        strncpy(tacFile, outputFile, baseLen);
+        tacFile[baseLen] = '\0';
+        strcat(tacFile, ".tac");
+
+        strncpy(optimizedTacFile, outputFile, baseLen);
+        optimizedTacFile[baseLen] = '\0';
+        strcat(optimizedTacFile, ".optimized.tac");
+    } else {
+        // No extension found, just append
+        sprintf(tacFile, "%s.tac", outputFile);
+        sprintf(optimizedTacFile, "%s.optimized.tac", outputFile);
+    }
+}
+
+void test_symbol_table_performance() {
+    BenchmarkResult* bench = start_benchmark();
+
+    // Test with 1000 variables
+    for(int i = 0; i < 1000; i++) {
+        char varname[20];
+        sprintf(varname, "var_%d", i);
+        addVar(varname, NULL);
+    }
+
+    // Test lookups
+    for(int i = 0; i < 10000; i++) {
+        char varname[20];
+        sprintf(varname, "var_%d", rand() % 1000);
+        getVarOffset(varname);
+    }
+
+    end_benchmark(bench, "Symbol Table");
+    printf("Collisions: %d\n", symtab.collisions);
+    free(bench);
+}
 
 int main(int argc, char* argv[]) {
     if (argc != 3) {
@@ -45,10 +89,10 @@ int main(int argc, char* argv[]) {
     printf("│ • Parsing grammar rules (parser.y)\n");
     printf("│ • Building Abstract Syntax Tree\n");
     printf("└──────────────────────────────────────────────────────────┘\n");
-    printf("\nTokens recognized:\n");
-
+    
+    init_ast_memory();
     if (yyparse() == 0) {
-        printf("\n✓ Parse successful - program is syntactically correct!\n\n");
+        printf("✓ Parse successful - program is syntactically correct!\n\n");
         
         /* PHASE 2: AST Display */
         printf("┌──────────────────────────────────────────────────────────┐\n");
@@ -63,18 +107,20 @@ int main(int argc, char* argv[]) {
         printf("┌──────────────────────────────────────────────────────────┐\n");
         printf("│ PHASE 3: SEMANTIC ANALYSIS                               │\n");
         printf("├──────────────────────────────────────────────────────────┤\n");
-        printf("│ Checking semantic correctness:                           │\n");
-        printf("│ • Variables declared before use                          │\n");
-        printf("│ • No duplicate declarations                              │\n");
-        printf("│ • Type consistency (for future extensions)               │\n");
+        printf("│ Checking program semantics:                              │\n");
+        printf("│ • Variable declarations and usage                        │\n");
+        printf("│ • Type compatibility                                     │\n");
+        printf("│ • Duplicate declarations                                 │\n");
         printf("└──────────────────────────────────────────────────────────┘\n");
         initSemantic();
-        if (!analyzeProgram(root)) {
-            printf("\n✗ Compilation failed due to semantic errors!\n");
+        int semResult = performSemanticAnalysis(root);
+        printSemanticSummary();
+
+        if (semResult != 0) {
+            printf("✗ Compilation failed due to semantic errors\n");
             fclose(yyin);
             return 1;
         }
-        printf("\n");
 
         /* PHASE 4: Intermediate Code */
         printf("┌──────────────────────────────────────────────────────────┐\n");
@@ -87,12 +133,12 @@ int main(int argc, char* argv[]) {
         initTAC();
         generateTAC(root);
         printTAC();
+        printTempAllocatorState();
 
-        // Save TAC to file
-        char tacFile[256];
-        sprintf(tacFile, "%s.tac", argv[1]);
+        // Generate TAC filename and save to file
+        char tacFile[256], optimizedTacFile[256];
+        getTACFilename(argv[2], tacFile, optimizedTacFile);
         saveTACToFile(tacFile);
-        printf("✓ TAC saved to: %s\n\n", tacFile);
 
         /* PHASE 5: Optimization */
         printf("┌──────────────────────────────────────────────────────────┐\n");
@@ -104,23 +150,22 @@ int main(int argc, char* argv[]) {
         printf("└──────────────────────────────────────────────────────────┘\n");
         optimizeTAC();
         printOptimizedTAC();
+        printf("\n");
 
         // Save optimized TAC to file
-        char optTacFile[256];
-        sprintf(optTacFile, "%s.opt.tac", argv[1]);
-        saveOptimizedTACToFile(optTacFile);
-        printf("✓ Optimized TAC saved to: %s\n\n", optTacFile);
+        saveOptimizedTACToFile(optimizedTacFile);
 
         /* PHASE 6: Code Generation */
         printf("┌──────────────────────────────────────────────────────────┐\n");
         printf("│ PHASE 6: MIPS CODE GENERATION                            │\n");
         printf("├──────────────────────────────────────────────────────────┤\n");
-        printf("│ Translating to MIPS assembly:                            │\n");
+        printf("│ Translating OPTIMIZED TAC to MIPS assembly:              │\n");
+        printf("│ • Using optimized TAC (with constant folding)            │\n");
         printf("│ • Variables stored on stack                              │\n");
-        printf("│ • Using $t0-$t7 for temporary values                     │\n");
+        printf("│ • Register allocation with LRU spilling                  │\n");
         printf("│ • System calls for print operations                      │\n");
         printf("└──────────────────────────────────────────────────────────┘\n");
-        generateMIPS(root, argv[2]);
+        generateMIPSFromTAC(argv[2]);
         printf("✓ MIPS assembly code generated to: %s\n", argv[2]);
         printf("\n");
         
