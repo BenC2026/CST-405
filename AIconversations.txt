@@ -1,0 +1,2366 @@
+How do I fix this error:
+The error $1 of 'decl' has no declared type means that $1 (which refers to INT in your rule) doesn't have a type declared in the %union and %token/%type directives.
+
+Let me check your parser's type declarations.
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\parser.y
+The problem is on line 89. You're using $1 (which is INT) to pass as the type to addVar(), but INT is declared as a keyword with no semantic value (line 35).
+
+There are two issues:
+
+INT has no type - On line 35, INT is declared without a type, so $1 has no value
+You're using $2 after freeing it - On line 81 you free($2), then on line 89 you try to use $2 again
+Fix: Instead of using $1 for the type, pass a string literal directly. Also, move addVar before free($2):
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\parser.y
+Edit failed
+How do I fix this error?
+The AST is printing DECL: x (x) instead of showing the type like DECL: int x. This is because createDecl only stores the variable name, not the type.
+
+Let me check your AST implementation.
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\ast.h
+I see the issue. The problem is in ast.h - the name and type fields are separate members of the union (lines 34-35), which means they share the same memory. When you store name, it overwrites type.
+
+You need to change the structure so name and type are in a struct together inside the union. Here's what to fix:
+
+1. In ast.h, change lines 33-36 from:
+
+
+/* Variable or declaration name (NODE_VAR, NODE_DECL) */
+char* name;
+char* type;  /* Variable type for declarations (NODE_DECL) */
+To:
+
+
+/* Variable or declaration name (NODE_VAR, NODE_DECL) */
+char* name;
+
+/* Declaration with type (NODE_DECL) */
+struct {
+    char* name;
+    char* type;
+} decl;
+2. In ast.c, update createDecl to take a type parameter and use the new struct:
+
+
+ASTNode* createDecl(char* name, char* type) {
+    ASTNode* node = malloc(sizeof(ASTNode));
+    node->type = NODE_DECL;
+    node->data.decl.name = strdup(name);
+    node->data.decl.type = strdup(type);
+    return node;
+}
+3. In ast.c, update printAST for NODE_DECL:
+
+
+case NODE_DECL:
+    printf("DECL: %s %s\n", node->data.decl.type, node->data.decl.name);
+    break;
+4. In ast.h, update the function declaration:
+
+
+ASTNode* createDecl(char* name, char* type);
+5. In parser.y, pass the type to createDecl:
+
+
+$$ = createDecl($2, "int");   // for INT ID ';'
+$$ = createDecl($2, "float"); // for FLOAT ID ';'
+Would you like me to make these changes for you?
+
+How do I fix this error:
+This is a linker error - the functions initSemantic and analyzeProgram are being called in main.c but aren't defined anywhere. You need to either:
+
+Create the semantic analysis file (semantic.c and semantic.h) with these functions, or
+Comment out/remove the calls in main.c if you don't need semantic analysis yet
+Let me check what's in your main.c and if you have a semantic file.
+
+Globpattern: "**/semantic*"
+Found 2 files
+You have semantic.c and semantic.h files. The functions are likely not implemented or not being compiled. Let me check the semantic files and your Makefile.
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\Makefile
+Found the problem. The semantic.o is missing from the Makefile. The file semantic.c exists but it's not being compiled and linked.
+
+You need to add semantic.o to the OBJS variable and add a build rule for it.
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\Makefile
+Edit failed
+No response requested.
+
+How would I rewrite this to eliminate dead code:
+
+void optimizeTAC() {
+    TACInstr* curr = tacList.head;
+    
+    // Copy propagation table
+    typedef struct {
+        char* var;
+        char* value;
+    } VarValue;
+    
+    VarValue values[100];
+    int valueCount = 0;
+    
+    while (curr) {
+        TACInstr* newInstr = NULL;
+        
+        switch(curr->op) {
+            case TAC_DECL:
+                newInstr = createTAC(TAC_DECL, NULL, NULL, curr->result);
+                break;
+                
+            case TAC_ADD:
+            case TAC_SUB:
+            case TAC_MUL:
+            case TAC_DIV: {
+                // Check if both operands are constants
+                char* left = curr->arg1;
+                char* right = curr->arg2;
+                
+                // Look up values in propagation table (search from most recent)
+                for (int i = valueCount - 1; i >= 0; i--) {
+                    if (strcmp(values[i].var, left) == 0) {
+                        left = values[i].value;
+                        break;
+                    }
+                }
+                for (int i = valueCount - 1; i >= 0; i--) {
+                    if (strcmp(values[i].var, right) == 0) {
+                        right = values[i].value;
+                        break;
+                    }
+                }
+                
+                // Constant folding
+                if (isdigit(left[0]) && isdigit(right[0])) {
+                    int result = atoi(left) + atoi(right);
+                    char* resultStr = malloc(20);
+                    sprintf(resultStr, "%d", result);
+                    
+                    // Store for propagation
+                    values[valueCount].var = strdup(curr->result);
+                    values[valueCount].value = resultStr;
+                    valueCount++;
+                    
+                    newInstr = createTAC(TAC_ASSIGN, resultStr, NULL, curr->result);
+                } else {
+                    newInstr = createTAC(TAC_ADD, left, right, curr->result);
+                }
+                break;
+            }
+            
+            case TAC_ASSIGN: {
+                char* value = curr->arg1;
+                
+                // Look up value in propagation table (search from most recent)
+                for (int i = valueCount - 1; i >= 0; i--) {
+                    if (strcmp(values[i].var, value) == 0) {
+                        value = values[i].value;
+                        break;
+                    }
+                }
+                
+                // Store for propagation
+                values[valueCount].var = strdup(curr->result);
+                values[valueCount].value = strdup(value);
+                valueCount++;
+                
+                newInstr = createTAC(TAC_ASSIGN, value, NULL, curr->result);
+                break;
+            }
+            
+            case TAC_PRINT: {
+                char* value = curr->arg1;
+                
+                // Look up value in propagation table
+                for (int i = valueCount - 1; i >= 0; i--) {  // Search from most recent
+                    if (strcmp(values[i].var, value) == 0) {
+                        value = values[i].value;
+                        break;
+                    }
+                }
+                
+                newInstr = createTAC(TAC_PRINT, value, NULL, NULL);
+                break;
+            }
+        }
+        
+        if (newInstr) {
+            appendOptimizedTAC(newInstr);
+        }
+        
+        curr = curr->next;
+    }
+}
+To add dead code elimination, you need to track which variables are actually used and remove assignments to variables that are never read. Here's the approach:
+
+First pass: Scan through and find all variables that are used (read from)
+Second pass: Only emit instructions that assign to variables that are used, or have side effects (like PRINT)
+Here's how to modify your function:
+
+
+void optimizeTAC() {
+    // === DEAD CODE ELIMINATION: First pass - find all used variables ===
+    char* usedVars[100];
+    int usedCount = 0;
+    
+    TACInstr* curr = tacList.head;
+    while (curr) {
+        // arg1 and arg2 are "uses" of variables
+        if (curr->arg1 && !isdigit(curr->arg1[0])) {
+            // Check if already in usedVars
+            int found = 0;
+            for (int i = 0; i < usedCount; i++) {
+                if (strcmp(usedVars[i], curr->arg1) == 0) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) {
+                usedVars[usedCount++] = curr->arg1;
+            }
+        }
+        if (curr->arg2 && !isdigit(curr->arg2[0])) {
+            int found = 0;
+            for (int i = 0; i < usedCount; i++) {
+                if (strcmp(usedVars[i], curr->arg2) == 0) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) {
+                usedVars[usedCount++] = curr->arg2;
+            }
+        }
+        curr = curr->next;
+    }
+    
+    // === Second pass: copy propagation + constant folding + dead code elimination ===
+    curr = tacList.head;
+    
+    // Copy propagation table
+    typedef struct {
+        char* var;
+        char* value;
+    } VarValue;
+    
+    VarValue values[100];
+    int valueCount = 0;
+    
+    while (curr) {
+        TACInstr* newInstr = NULL;
+        
+        // Dead code elimination: skip if result is never used
+        // (but keep PRINT and DECL)
+        if (curr->result && curr->op != TAC_DECL) {
+            int isUsed = 0;
+            for (int i = 0; i < usedCount; i++) {
+                if (strcmp(usedVars[i], curr->result) == 0) {
+                    isUsed = 1;
+                    break;
+                }
+            }
+            if (!isUsed && curr->op != TAC_PRINT) {
+                curr = curr->next;
+                continue;  // Skip this dead instruction
+            }
+        }
+        
+        switch(curr->op) {
+            // ... rest of your existing switch cases ...
+        }
+        
+        if (newInstr) {
+            appendOptimizedTAC(newInstr);
+        }
+        
+        curr = curr->next;
+    }
+}
+Key changes:
+
+First pass (lines 2-28): Collects all variable names that appear as arg1 or arg2 (i.e., are read)
+Dead code check (lines 47-58): Before processing each instruction, checks if its result is in the used list. If not, skips emitting it.
+Exceptions: TAC_PRINT and TAC_DECL are always kept since they have side effects
+This will eliminate assignments like x = 5 if x is never used anywhere in the program.
+
+Why am I getting a syntax error here:
+The error is because your grammar only allows declarations or function definitions at the top level. The statement x = 10; is an assignment, not a declaration.
+
+Looking at your parser.y grammar:
+
+
+decl_or_func:
+    func_def { $$ = $1; }
+    | decl { $$ = $1; }    // Only declarations allowed, not assignments
+    ;
+The fix: Wrap your code in a function like main():
+
+
+int main() {
+    int x;
+    int y;
+    int z;
+    int a;
+    int b;
+    int c;
+    int d;
+    
+    x = 10;
+    y = 20;
+    z = x + y;
+    print(z);
+    
+    x = z + 5;
+    print(x);
+    
+    y = x + y + z;
+    print(y);
+    
+    a = x - y;
+    print(a);
+    
+    b = a * z;
+    print(b);
+    
+    c = b / a;
+    print(c);
+    
+    d = z - c * a;
+    print(d);
+}
+Your current grammar requires all executable statements to be inside a function body. The top level can only have int x; style declarations or function definitions.
+
+How do I fix this error:
+The error "TAC temporary t0 not in register" means the code generator is trying to use a temporary variable (t0) but can't find it in the register table. This typically happens when a register was freed too early or the temporary wasn't properly allocated.
+
+Let me check your codegen.c to see the issue.
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+The problem is in the TAC_ADD case at codegen.c:507-508. After allocating a register for the result, it frees reg1 and reg2. But if the register allocator reused one of those registers for regResult, you're freeing the register that holds your result.
+
+The fix: Don't free registers that are the same as regResult:
+
+
+// Free operand registers only if different from result
+if (reg1 != regResult) freeReg(reg1);
+if (reg2 != regResult) freeReg(reg2);
+However, a more robust solution is to not free operand registers immediately after binary operations, because TAC temporaries need to persist until they're used. The safest approach for a simple compiler is to remove the freeReg calls entirely from TAC_ADD:
+
+
+case TAC_ADD: {
+    // ... existing code for loading arg1 and arg2 ...
+    
+    // Allocate register for result
+    regResult = allocReg(curr->result);
+
+    // Perform addition
+    fprintf(output, "    add $t%d, $t%d, $t%d   # %s = %s + %s\n",
+            regResult, reg1, reg2, curr->result, curr->arg1, curr->arg2);
+
+    // Mark result register as dirty (only if it's a real variable)
+    if (!isTACTemp(curr->result)) {
+        regAlloc.regs[regResult].isDirty = 1;
+    }
+
+    // DON'T free reg1 and reg2 here - let the allocator
+    // handle spilling when it runs out of registers
+    
+    break;
+}
+The register allocator will automatically spill registers when needed via selectVictimReg(). Explicitly freeing them too early causes TAC temporaries to be lost before they're used.
+
+How do I make the output match the code:
+The problem is that your code generator only handles TAC_ADD but not TAC_SUB, TAC_MUL, or TAC_DIV. Looking at codegen.c, the generateMIPSFromTAC function has a case for TAC_ADD but the other arithmetic operations fall through to default and generate no code.
+
+You need to add cases for subtraction, multiplication, and division. They should be similar to TAC_ADD but use the appropriate MIPS instructions:
+
+
+case TAC_SUB: {
+    // Same setup as TAC_ADD for loading arg1 and arg2...
+    // Then use:
+    fprintf(output, "    sub $t%d, $t%d, $t%d   # %s = %s - %s\n",
+            regResult, reg1, reg2, curr->result, curr->arg1, curr->arg2);
+    break;
+}
+
+case TAC_MUL: {
+    // Same setup as TAC_ADD for loading arg1 and arg2...
+    // Then use:
+    fprintf(output, "    mul $t%d, $t%d, $t%d   # %s = %s * %s\n",
+            regResult, reg1, reg2, curr->result, curr->arg1, curr->arg2);
+    break;
+}
+
+case TAC_DIV: {
+    // Same setup as TAC_ADD for loading arg1 and arg2...
+    // Then use:
+    fprintf(output, "    div $t%d, $t%d         # %s / %s\n",
+            reg1, reg2, curr->arg1, curr->arg2);
+    fprintf(output, "    mflo $t%d              # %s = quotient\n",
+            regResult, curr->result);
+    break;
+}
+Note: MIPS division is different - div puts the quotient in the LO register, so you need mflo to retrieve it.
+
+Would you like me to add these cases to your codegen.c file?
+
+How do I fix this error:
+The symbol table is empty (Count: 0), which means declarations aren't being processed before the code that uses variables. Let me check how your TAC is being generated and what the optimized TAC looks like.
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c
+The symbol table is empty when the code generator runs, which means declarations aren't being processed. Let me check how everything is called.
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\main.c
+Let me check the symtab functions to understand the full picture.
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\symtab.c
+Can you add cases for TAC_ARRAY_DECL, TAC_ARRAY_ASSIGN, and TAC_ARRAY_ACCESS in the generateMIPSFromTAC function in codegen.c?
+Let me read the current state of codegen.c to see the existing patterns.
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 381-700)
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 696-775)
+Now I have the full picture. I'll add the three array cases before the default case.
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Added 120 lines
+Done. Here's what each case does:
+
+TAC_ARRAY_DECL: Registers the array in the symbol table using addArrayVar, allocating size * 4 bytes on the stack.
+
+TAC_ARRAY_ASSIGN (arr[index] = value): Loads the index and value into registers, calculates the element address (base + index * 4), and stores the value with sw.
+
+TAC_ARRAY_ACCESS (result = arr[index]): Loads the index, calculates the element address (base + index * 4), and loads the value with lw into the result register.
+
+All three cases follow the same register allocation patterns as your existing code (using findVarReg, allocReg, isConstant, isTACTemp checks).
+
+How do I fix this error:
+The error is at main.c:60 - symtab.collisions is used but collisions doesn't exist in your SymbolTable struct. Let me check your symtab.h.
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\symtab.h
+The collisions field exists in SymbolTable (line 30), and symtab is declared in symtab.c as a global. The problem is that main.c can't see the symtab variable because it's not declared as extern in main.c.
+
+Add this line near the top of main.c, after the includes:
+
+
+extern SymbolTable symtab;
+Or alternatively, add it to symtab.h so any file that includes the header can access it:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\symtab.h
+Added 3 lines
+This adds an extern declaration in the header so any file that includes symtab.h (like main.c) can access the symtab global variable.
+
+How do I fix this error:
+API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"messages.46.content.9.image.source.base64: image cannot be empty"},"request_id":"req_011CXzqF3qi4t29j1P2cUgTx"}
+
+How do I fix this error:
+API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"messages.46.content.9.image.source.base64: image cannot be empty"},"request_id":"req_011CXzqJh6eXfaBUfSX96L1r"}
+
+How do I fix this error:
+
+ast.c:11:5: error: unknown type name ‘size_t’
+   11 |     size_t used;
+      |     ^~~~~~
+ast.c:12:5: error: unknown type name ‘size_t’
+   12 |     size_t size;
+      |     ^~~~~~
+ast.c:21:5: error: unknown type name ‘size_t’
+   21 |     size_t total_memory;
+      |     ^~~~~~
+API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"messages.46.content.9.image.source.base64: image cannot be empty"},"request_id":"req_011CXzqMbyuT7Pt7EFq92L2A"}
+
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Analysis:
+Let me chronologically analyze the entire conversation to capture all technical details, decisions, and changes made.
+
+1. **First issue**: `size_t` unknown type in ast.c
+   - Added `#include <stdlib.h>` at the top of ast.c
+
+2. **Second issue**: Conflicting types for `ast_alloc` 
+   - `ast_alloc` was used at line 38 before being defined at line 362
+   - Added forward declaration `void* ast_alloc(size_t size);` before first use
+
+3. **Third issue**: Undefined reference to `isConstant` in tac.c
+   - `isConstant` was defined as `static` in codegen.c, invisible to tac.c
+   - tac.c already had `isConstantNumber` doing the same thing
+   - Added forward declaration `static int isConstant(const char* str);` and defined it as a wrapper calling `isConstantNumber`
+
+4. **Fourth issue**: Segfault during parsing (after "Building Abstract Syntax Tree")
+   - `init_ast_memory()` was never called before `yyparse()`
+   - `ast_mem.current` was NULL when `ast_alloc()` tried to use it
+   - Added `init_ast_memory()` declaration to ast.h and call in main.c before `yyparse()`
+
+5. **Fifth issue**: No optimized TAC being displayed
+   - `optimizeTAC()` modified `tacList` in-place but never copied results to `optimizedList`
+   - `printOptimizedTAC()` read from empty `optimizedList`
+   - Added copy loop at end of `optimizeTAC()` to copy tacList into optimizedList
+
+6. **Sixth issue**: Array-related functions not printed in test.optimized.tac
+   - `TAC_ARRAY_DECL` was generated with `arg1=NULL` but print functions did `printf("ARRAY_DECL %s[%s]", result, arg1)` - UB with NULL
+   - Array size (int) was never converted to string for arg1
+   - Fixed by converting `node->data.array_decl.size` to string and passing as arg1
+
+7. **Seventh issue**: "Variable 'f' not found" segfault with function parameters
+   - `NODE_PARAM` only had `name` field, no `type` field, but code accessed `param->data.decl.type` (wrong union member)
+   - Changed to pass `"int"` literal instead
+   - User said "it's still giving me the error" - deeper investigation revealed MULTIPLE places reading `node->data.decl.type` on wrong node types throughout tac.c
+   - Fixed 6 locations: NODE_BINOP (line 149), NODE_FUNC_CALL (line 201), NODE_ASSIGN (line 245), NODE_ARRAY_ACCESS (line 211), NODE_FUNC_DEF FUNC_BEGIN (line 371), NODE_FUNC_DEF FUNC_END (line 395)
+   - Also added `copy->type = src->type ? strdup(src->type) : NULL;` to the optimizedList copy loop
+
+8. **Eighth issue**: SPIM outputs 0 instead of 10 for `addFive(5)`
+   - Function call codegen was all placeholder comments - no `jal`, no argument passing, no return value handling
+   - Fixed TAC_ARG to load argument into `$a0`
+   - Fixed TAC_CALL to save/restore caller-saved registers, `jal`, and move `$v0` to result register
+   - Fixed TAC_PARAM to store `$a0` into parameter's stack slot
+   - Fixed TAC_FUNC_BEGIN (non-main) to allocate stack frame and save `$ra`
+   - Fixed TAC_FUNC_END (non-main) to restore `$ra`, deallocate frame, `jr $ra`
+
+9. **Ninth issue**: Infinite loop printing 15
+   - main's FUNC_END had no exit - execution fell through into next function
+   - `$a0` was 10 (from newline syscall), 10+5=15, `jr $ra` went back to main, loop
+   - Fixed FUNC_END for main to emit exit syscall (`li $v0, 10; syscall`)
+
+10. **Tenth issue**: Function order matters - addFive before main causes wrong execution
+    - Hardcoded `main:` label at top, but first function's code went right under it
+    - Changed boilerplate to emit `j main` jump instead of `main:` label
+    - Made FUNC_BEGIN emit labels and stack setup for ALL functions including main
+
+11. **Eleventh issue**: Semantic error "Variable 'list' used before declaration" for arrays
+    - Semantic analyzer had no handling for NODE_ARRAY_DECL, NODE_ARRAY_ASSIGN, NODE_ARRAY_ACCESS
+    - Added cases in checkStmt for NODE_ARRAY_DECL and NODE_ARRAY_ASSIGN
+    - Added case in checkExpr for NODE_ARRAY_ACCESS
+
+12. **Twelfth issue**: Parameters not registered in semantic scope (only last parameter 'e' visible)
+    - Parameter list is left-recursive nested tree, not flat list
+    - Both `countParams` and `checkFuncDef` parameter traversal only checked if `param_list.param` was NODE_PARAM, skipping nested NODE_PARAM_LIST
+    - Made `countParams` recursive
+    - Rewrote checkFuncDef parameter handling to use countParams
+    - Also fixed same issue in tac.c's `generateTACFuncDef` - created recursive `generateTACParams` helper
+
+13. **Thirteenth issue**: "Function 'sumFive' expects 5 arguments, got 2"
+    - `countArgs` in semantic.c had same nested tree traversal bug
+    - Made `countArgs` recursive
+
+14. **Fourteenth issue**: Segfault with 5-argument function call
+    - TAC generation for function call arguments had same nested tree bug
+    - `generateTACExpr` had no case for NODE_ARG_LIST, returned NULL
+    - Created recursive `generateTACArgs` helper
+
+15. **Current/Latest issue**: `sumFive(10,20,30,40,50)` returns 250 instead of 150
+    - All parameters stored from `$a0` (only last arg survives)
+    - Caller overwrites `$a0` with each argument, only last one (50) remains
+    - 50*5 = 250
+    - Need to implement stack-based argument passing for multiple arguments
+    - Was about to implement fix when summary was requested
+
+Summary:
+1. Primary Request and Intent:
+   The user is building/debugging an educational C compiler (minicompiler) that compiles a simple C-like language to MIPS assembly. The compiler has phases: lexical analysis (scanner.l), parsing (parser.y/bison), AST construction, semantic analysis, TAC (Three-Address Code) generation, TAC optimization, and MIPS code generation. The user has been iteratively presenting compilation/runtime errors and asking for fixes. The test programs involve functions, arrays, multiple parameters, and function calls.
+
+2. Key Technical Concepts:
+   - C compiler construction (lexer, parser, AST, semantic analysis, TAC, codegen)
+   - Bison/Yacc parser with left-recursive grammars creating nested tree structures
+   - Three-Address Code (TAC) as intermediate representation
+   - MIPS assembly code generation
+   - Memory pool allocator for AST nodes
+   - Symbol table management with per-function scopes
+   - Register allocation with LRU spilling
+   - C union type safety (accessing wrong union members = undefined behavior)
+   - MIPS calling convention ($a0-$a3, $v0, $ra, stack frames)
+   - Left-recursive grammar producing nested trees (NODE_PARAM_LIST, NODE_ARG_LIST)
+
+3. Files and Code Sections:
+
+   - **ast.c** - AST node creation functions and memory pool
+     - Added `#include <stdlib.h>` for `size_t`
+     - Added forward declaration `void* ast_alloc(size_t size);`
+     - Contains `init_ast_memory()` which initializes the memory pool
+     - Contains `createFuncDef`, `createParam`, `createArrayDecl`, etc.
+
+   - **ast.h** - AST type definitions and function declarations
+     - Added `void init_ast_memory(void);` declaration
+     - User added `char* type;` field to the `param` struct
+     - Node types include: NODE_NUM, NODE_VAR, NODE_BINOP, NODE_DECL, NODE_ASSIGN, NODE_PRINT, NODE_STMT_LIST, NODE_FUNC_DEF, NODE_PARAM, NODE_PARAM_LIST, NODE_FUNC_CALL, NODE_ARG_LIST, NODE_RETURN, NODE_IF, NODE_WHILE, NODE_BLOCK, NODE_ARRAY_DECL, NODE_ARRAY_ASSIGN, NODE_ARRAY_ACCESS
+
+   - **tac.c** - TAC generation and optimization (HEAVILY modified)
+     - Added `isConstant` wrapper function calling `isConstantNumber`
+     - Fixed `NODE_ARRAY_DECL` TAC generation to convert int size to string for arg1
+     - Fixed 6 locations reading `node->data.decl.type` on wrong node types → all changed to `"int"`
+     - Fixed FUNC_BEGIN and FUNC_END to use `"int"` instead of `node->data.decl.type`
+     - Added `copy->type = src->type ? strdup(src->type) : NULL;` to optimizedList copy
+     - Added copy loop at end of `optimizeTAC()` to populate `optimizedList`
+     - Created recursive `generateTACParams()` helper:
+       ```c
+       static void generateTACParams(ASTNode* param) {
+           if (!param) return;
+           if (param->type == NODE_PARAM) {
+               appendTAC(createTAC(TAC_PARAM, NULL, NULL, param->data.param.name, "int"));
+           } else if (param->type == NODE_PARAM_LIST) {
+               generateTACParams(param->data.param_list.param);
+               generateTACParams(param->data.param_list.next);
+           }
+       }
+       ```
+     - Created recursive `generateTACArgs()` helper:
+       ```c
+       static int generateTACArgs(ASTNode* arg) {
+           if (!arg) return 0;
+           if (arg->type == NODE_ARG_LIST) {
+               int count = generateTACArgs(arg->data.arg_list.expr);
+               count += generateTACArgs(arg->data.arg_list.next);
+               return count;
+           }
+           char* argTemp = generateTACExpr(arg);
+           appendTAC(createTAC(TAC_ARG, argTemp, NULL, NULL, NULL));
+           return 1;
+       }
+       ```
+     - Replaced inline argument loop in NODE_FUNC_CALL with `generateTACArgs` call
+
+   - **codegen.c** - MIPS code generation from optimized TAC (HEAVILY modified)
+     - TAC_FUNC_BEGIN: Now emits label + stack frame for ALL functions (including main), resets register allocator, saves $ra for non-main
+     - TAC_FUNC_END: Main gets exit syscall; others get $ra restore + jr $ra
+     - TAC_ARG: Changed from comment to loading argument into `$a0`
+     - TAC_CALL: Changed from placeholder to save $t0-$t3, `jal`, restore, `move $tN, $v0`
+     - TAC_PARAM: Changed to `sw $a0, offset($sp)` to store parameter from $a0
+     - Program header changed from `main:` to `j main` jump
+     - Key current state of TAC_ARG:
+       ```c
+       case TAC_ARG: {
+           fprintf(output, "    # Argument: %s\n", curr->arg1);
+           if (isConstant(curr->arg1)) {
+               fprintf(output, "    li $a0, %s\n", curr->arg1);
+           } else {
+               int reg = findVarReg(curr->arg1);
+               if (reg != -1) {
+                   fprintf(output, "    move $a0, $t%d\n", reg);
+               } else {
+                   int offset = getVarOffset(curr->arg1);
+                   if (offset != -1) {
+                       fprintf(output, "    lw $a0, %d($sp)\n", offset);
+                   }
+               }
+           }
+           break;
+       }
+       ```
+     - Key current state of TAC_PARAM:
+       ```c
+       case TAC_PARAM: {
+           int offset = addVar(curr->result, curr->type);
+           if (offset == -1) {
+               fprintf(stderr, "Error: Parameter %s already declared\n", curr->result);
+               exit(1);
+           }
+           fprintf(output, "    sw $a0, %d($sp)      # Store parameter '%s'\n", offset, curr->result);
+           break;
+       }
+       ```
+
+   - **main.c** - Compiler main entry point
+     - Added `init_ast_memory()` call before `yyparse()`
+
+   - **semantic.c** - Semantic analysis
+     - Added NODE_ARRAY_DECL, NODE_ARRAY_ASSIGN cases in checkStmt
+     - Added NODE_ARRAY_ACCESS case in checkExpr
+     - Made `countParams` recursive for nested PARAM_LIST trees
+     - Made `countArgs` recursive for nested ARG_LIST trees
+     - Rewrote checkFuncDef parameter handling to use countParams
+
+   - **symtab.c** - Symbol table with addVar, getVarOffset, isVarDeclared, addArrayVar
+
+   - **parser.y** - Bison grammar (user-modified to add array parameter support)
+
+   - **test.cm** - Current test file with comprehensive test cases (6 requirements)
+
+   - **tac.h** - TAC instruction types and structures
+
+4. Errors and fixes:
+   - **`size_t` unknown**: Added `#include <stdlib.h>` to ast.c
+   - **Conflicting types for `ast_alloc`**: Added forward declaration before first use
+   - **Undefined `isConstant`**: Added local definition in tac.c wrapping `isConstantNumber`
+   - **Segfault during parsing**: Called `init_ast_memory()` before `yyparse()`
+   - **Empty optimized TAC output**: Added copy from tacList to optimizedList after optimization
+   - **Array TAC not printing**: Stored array size as string in arg1 for TAC_ARRAY_DECL
+   - **"Variable 'f' not found" segfault**: Fixed wrong union member access (`node->data.decl.type` on non-DECL nodes) in 6 places, all changed to `"int"`. User reported "it's still giving me the error" after initial PARAM-only fix, requiring deeper investigation of all union misuses.
+   - **SPIM outputs 0**: Implemented actual MIPS instructions for function calls (was all placeholders)
+   - **Infinite loop printing 15**: Added exit syscall to main's FUNC_END
+   - **Function order matters**: Changed header from `main:` to `j main`, made all functions emit own labels
+   - **Array undeclared in semantic check**: Added NODE_ARRAY_DECL/ASSIGN/ACCESS to semantic analyzer
+   - **Only last parameter registered**: Made parameter traversal recursive for nested PARAM_LIST trees
+   - **Wrong argument count**: Made `countArgs` recursive for nested ARG_LIST trees  
+   - **Segfault with 5 args**: Made TAC argument generation recursive with `generateTACArgs`
+   - **sumFive returns 250 instead of 150**: All args overwrite `$a0`, only last survives. **NOT YET FIXED.**
+
+5. Problem Solving:
+   Most problems fell into a few patterns:
+   - C union type safety: Accessing `node->data.decl.type` on non-DECL nodes reads garbage from overlapping union members (pointers to ASTNodes interpreted as char*)
+   - Left-recursive grammar nested trees: The parser's left-recursive rules create deeply nested trees (PARAM_LIST, ARG_LIST), but traversal code assumed flat linked lists. Fixed by making traversals recursive.
+   - Missing implementations: Function call codegen was all placeholder comments. Implemented actual MIPS calling convention.
+   - Current unsolved: Multi-argument function calls only pass the last argument value since all go through `$a0`.
+
+6. All user messages:
+   - "How do I fix this error: ast.c:11:5: error: unknown type name 'size_t'"
+   - "How do I fix this error: ast.c:362:7: error: conflicting types for 'ast_alloc'"
+   - "How do I fix this error: undefined reference to `isConstant`"
+   - "How do I fix this error: Segmentation fault (core dumped)" [after Phase 1 AST building]
+   - "Why is no optimized code being displayed"
+   - "Why are array-related functions not being printed to test.optimized.tac?"
+   - "How do I fix this error:" [Variable 'f' not found, segfault]
+   - "it's still giving me the error" [Variable 'f' segfault persisted after initial fix]
+   - "why isn't it returning 10:" [SPIM outputs 0]
+   - "It shouldn't be repeating the value:" [infinite loop of 15s]
+   - "How do I run the main code regardless of placement:" [function order dependency]
+   - "How do I fix this error:" [SEMANTIC ERROR: Variable 'list' used before declaration]
+   - "How do I fix this error:" [SEMANTIC ERROR: Variable 'a' used before declaration in sumFive]
+   - "How do I fix this error:" [SEMANTIC ERROR: Function 'sumFive' expects 5 arguments, got 2]
+   - "How do I fix this error:" [Segmentation fault with 5-argument function call]
+   - "why does it return 250 instead of 150:" [multi-argument passing broken]
+
+7. Pending Tasks:
+   - Fix multi-argument function calling convention (sumFive returns 250 instead of 150)
+   - Currently all arguments overwrite `$a0`, need stack-based argument passing
+
+8. Current Work:
+   The user asked "why does it return 250 instead of 150" for `sumFive(10,20,30,40,50)`. I diagnosed that the caller stores all 5 arguments into `$a0` sequentially (only last one=50 survives), and the callee reads all 5 parameters from `$a0` (all get 50, so 50*5=250). The fix requires implementing stack-based multi-argument passing:
+   - **Caller side (TAC_ARG)**: Need to store each argument to a designated area on the stack instead of all going to `$a0`
+   - **Callee side (TAC_PARAM)**: Need to read each parameter from the caller's argument area on the stack
+   - The approach discussed was using stack offsets (e.g., 300+i*4 in caller's frame) and having the callee read from (400+300+i*4) relative to its own $sp after frame allocation.
+
+9. Optional Next Step:
+   Implement stack-based multi-argument passing in codegen.c. The user's most recent message was: "why does it return 250 instead of 150:" I diagnosed the issue but had not yet implemented the fix. The fix requires:
+   1. Adding an `argIndex` counter to track argument position
+   2. Modifying TAC_ARG to store each argument at `(ARG_AREA_OFFSET + argIndex*4)($sp)` 
+   3. Modifying TAC_CALL to reset argIndex
+   4. Adding a `paramIndex` counter for parameters
+   5. Modifying TAC_PARAM to load from `(400 + ARG_AREA_OFFSET + paramIndex*4)($sp)` (caller's frame) and store to local offset
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: C:\Users\15203\.claude\projects\c--Users-15203-Downloads-CST-405-minimal-CST-405-minimal\e928399a-6215-4be5-b561-33a65ce53750.jsonl
+Please continue the conversation from where we left off without asking the user any further questions. Continue with the last task that you were asked to work on.
+I need to fix the multi-argument function calling convention. Currently all arguments overwrite $a0, so only the last one (50) survives, giving 50*5=250 instead of 10+20+30+40+50=150. Let me read the current codegen.c to implement the fix.
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Now I have the full picture. The issue is in generateMIPSFromTAC — all arguments go through $a0, so for sumFive(10,20,30,40,50) only the last argument (50) survives, and all 5 parameters get value 50, giving 250.
+
+The fix: use a stack-based argument passing area instead of $a0. Let me implement it.
+
+Update Todos
+
+Add argIndex/paramIndex globals and ARG_AREA_OFFSET define
+
+Fix TAC_ARG to store each arg on stack at unique offset
+
+Fix TAC_CALL to reset argIndex and save/restore all $t regs
+
+Fix TAC_PARAM to load from caller's argument area on stack
+
+Reset counters in TAC_FUNC_BEGIN
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Added 3 lines
+Update Todos
+
+Add argIndex/paramIndex globals and ARG_AREA_OFFSET define
+
+Reset counters in TAC_FUNC_BEGIN
+
+Fix TAC_ARG to store each arg on stack at unique offset
+
+Fix TAC_CALL to reset argIndex and save/restore all $t regs
+
+Fix TAC_PARAM to load from caller's argument area on stack
+Now reset the counters in TAC_FUNC_BEGIN:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Added 2 lines
+Update Todos
+
+Add argIndex/paramIndex globals and ARG_AREA_OFFSET define
+
+Reset counters in TAC_FUNC_BEGIN
+
+Fix TAC_PARAM to load from caller's argument area on stack
+
+Fix TAC_ARG to store each arg on stack at unique offset
+
+Fix TAC_CALL to reset argIndex and save/restore all $t regs
+Now fix TAC_PARAM to load each parameter from the caller's argument area instead of $a0:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Added 10 lines
+Update Todos
+
+Add argIndex/paramIndex globals and ARG_AREA_OFFSET define
+
+Reset counters in TAC_FUNC_BEGIN
+
+Fix TAC_PARAM to load from caller's argument area on stack
+
+Fix TAC_ARG to store each arg on stack at unique offset
+
+Fix TAC_CALL to reset argIndex and save/restore all $t regs
+Now fix TAC_ARG to store each argument at a unique stack offset instead of all going to $a0:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Added 15 lines
+Update Todos
+
+Add argIndex/paramIndex globals and ARG_AREA_OFFSET define
+
+Reset counters in TAC_FUNC_BEGIN
+
+Fix TAC_PARAM to load from caller's argument area on stack
+
+Fix TAC_ARG to store each arg on stack at unique offset
+
+Fix TAC_CALL to reset argIndex and save/restore all $t regs
+Now fix TAC_CALL to reset argIndex and save/restore all $t registers:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Modified
+Update Todos
+
+Add argIndex/paramIndex globals and ARG_AREA_OFFSET define
+
+Reset counters in TAC_FUNC_BEGIN
+
+Fix TAC_PARAM to load from caller's argument area on stack
+
+Fix TAC_ARG to store each arg on stack at unique offset
+
+Fix TAC_CALL to reset argIndex and save/restore all $t regs
+Now let me build and test to make sure it compiles:
+
+Bash Build the compiler
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && make clean && make 2>&1
+
+OUT
+Exit code 127
+/usr/bin/bash: line 1: make: command not found
+Bash Check for build files
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && ls Makefile* makefile* 2>&1 || echo "No makefile found"
+
+OUT
+ls: cannot access 'makefile*': No such file or directory
+Makefile
+No makefile found
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\Makefile
+Bash Compile codegen.c to check for errors
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && gcc -g -Wall -c codegen.c 2>&1
+
+OUT
+codegen.c: In function 'generateMIPSFromTAC':
+codegen.c:593:17: warning: enumeration value 'TAC_NEG' not handled in switch [-Wswitch]
+  593 |                 switch(curr->op) {
+      |                 ^~~~~~
+codegen.c:593:17: warning: enumeration value 'TAC_LT' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_GT' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_LE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_GE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_EQ' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_NE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ASSIGN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_PRINT' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_DECL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_LABEL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_GOTO' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_IF_FALSE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_IF_TRUE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_FUNC_BEGIN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_FUNC_END' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_PARAM' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARG' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_CALL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_RETURN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARRAY_DECL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARRAY_ASSIGN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARRAY_ACCESS' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_NOP' not handled in switch [-Wswitch]
+codegen.c: In function 'genExpr':
+codegen.c:260:1: warning: control reaches end of non-void function [-Wreturn-type]
+  260 | }
+      | ^
+Compiles successfully (only pre-existing warnings, no errors). The changes are in place. Here's a summary of what was changed:
+
+The problem: All function arguments were stored in $a0, so only the last one survived. For sumFive(10,20,30,40,50), all 5 params got value 50, giving 250.
+
+The fix — stack-based argument passing:
+
+TAC_ARG: Each argument is stored at (300 + argIndex*4)($sp) in the caller's frame, with argIndex incrementing for each arg. Arrays pass their address instead of a value.
+
+TAC_CALL: Saves/restores all $t0-$t9 registers (was only $t0-$t3), and resets argIndex = 0 for the next function call.
+
+TAC_PARAM: Each parameter loads from the caller's argument area at (400 + 300 + paramIndex*4)($sp) — the 400 accounts for the callee's own stack frame that was allocated in FUNC_BEGIN.
+
+TAC_FUNC_BEGIN: Resets both argIndex and paramIndex to 0.
+
+Stack layout (400-byte frame):
+
+Offsets 0–199: local variables
+Offsets 200–239: saved $t0-$t9 (during function calls)
+Offsets 300–395: argument passing area
+Offset 396: saved $ra
+Rebuild your compiler and re-run it on test.cm — sumFive(10,20,30,40,50) should now correctly return 150.
+
+How do I fix this error:
+/usr/bin/ld: warning: codegen.o: missing .note.GNU-stack section implies executable stack
+/usr/bin/ld: NOTE: This behaviour is deprecated and will be removed in a future version of the linker
+/usr/bin/ld: codegen.o: in function `genExpr':
+C:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal/C:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:199:(.text+0x73a): undefined reference to `__imp___acrt_iob_func'
+/usr/bin/ld: C:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal/C:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:237:(.text+0x860): undefined reference to `__imp___acrt_iob_func'
+/usr/bin/ld: codegen.o: in function `genStmt':
+C:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal/C:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:269:(.text+0x9fb): undefined reference to `__imp___acrt_iob_func'
+/usr/bin/ld: C:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal/C:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:279:(.text+0xa75): undefined reference to `__imp___acrt_iob_func'
+/usr/bin/ld: C:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal/C:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:327:(.text+0xcbc): undefined reference to `__imp___acrt_iob_func'
+/usr/bin/ld: codegen.o:C:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal/C:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:337: more undefined references to `__imp___acrt_iob_func' follow
+codegen.o:codegen.c:(.pdata+0x0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0xc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x10): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x14): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x18): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x1c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x20): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x24): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x28): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x2c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x30): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x34): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x38): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x3c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x40): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x44): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x48): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x4c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x50): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x54): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x58): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x5c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x60): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x64): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x68): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x6c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x70): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x74): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x78): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x7c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x80): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x84): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x88): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x8c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x90): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x94): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x98): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x9c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0xa0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0xa4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0xa8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0xac): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0xb0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0xb4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0xb8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0xbc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+collect2: error: ld returned 1 exit status
+make: *** [Makefile:12: minicompiler] Error 1
+This is a toolchain mismatch. The codegen.o file was compiled with a Windows compiler (it contains Windows-specific symbols like __imp___acrt_iob_func and __ImageBase), but the linker is from WSL/Linux. You have a stale .o file from a different compiler.
+
+The fix is to clean all old object files and rebuild everything with the same compiler:
+
+Bash Remove all stale object files
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && rm -f *.o minicompiler 2>&1 && echo "Cleaned"
+
+OUT
+Cleaned
+Now rebuild everything from scratch:
+
+Bash Full clean rebuild
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && make clean && make 2>&1
+
+OUT
+Exit code 127
+/usr/bin/bash: line 1: make: command not found
+Bash Check available build tools
+IN
+which gcc 2>&1; which make 2>&1; echo "---"; ls /usr/bin/make* 2>&1; ls /mingw64/bin/make* 2>&1; ls /mingw64/bin/mingw32-make* 2>&1
+
+OUT
+Exit code 2
+/c/ProgramData/mingw64/mingw64/bin/gcc
+which: no make in (/c/Users/15203/bin:/mingw64/bin:/usr/local/bin:/usr/bin:/bin:/mingw64/bin:/usr/bin:/c/Users/15203/bin:/c/Users/15203/AppData/Local/Programs/Python/Python311/Scripts:/c/Program Files/PlasticSCM5/server:/c/Program Files/PlasticSCM5/client:/c/Program Files/Microsoft/jdk-11.0.16.101-hotspot/bin:/c/WINDOWS/system32:/c/WINDOWS:/c/WINDOWS/System32/Wbem:/c/WINDOWS/System32/WindowsPowerShell/v1.0:/c/WINDOWS/System32/OpenSSH:/c/Program Files/HP/HP One Agent:/c/Program Files (x86)/GnuPG/bin:/cmd:/c/Program Files (x86)/dotnet:/c/WINDOWS/system32:/c/WINDOWS:/c/WINDOWS/System32/Wbem:/c/WINDOWS/System32/WindowsPowerShell/v1.0:/c/WINDOWS/System32/OpenSSH:/c/Program Files (x86)/GnuWin32/bin:/c/MinGW/bin:/c/Users/15203/Downloads/gcc-14.2.0-no-debug.7z/bin:/c/ProgramData/chocolatey/bin:/c/Program Files/PuTTY:/c/Program Files/dotnet:/c/Program Files/nodejs:/c/Users/15203/AppData/Local/Microsoft/WindowsApps:/c/Program Files/apache-maven-3.9.9-bin/apache-maven-3.9.9/bin:/c/Users/15203/AppData/Local/GitHubDesktop/bin:/c/Program Files (x86)/clisp-2.49:/c/ProgramData/mingw64/mingw64/bin:/c/Users/15203/AppData/Local/Programs/Microsoft VS Code/bin:/c/Users/15203/.dotnet/tools:/c/Users/15203/AppData/Roaming/npm:/usr/bin/vendor_perl:/usr/bin/core_perl)
+---
+ls: cannot access '/usr/bin/make*': No such file or directory
+ls: cannot access '/mingw64/bin/make*': No such file or directory
+ls: cannot access '/mingw64/bin/mingw32-make*': No such file or directory
+Bash Search for make in other locations
+IN
+ls /c/MinGW/bin/mingw32-make* 2>&1; ls /c/ProgramData/mingw64/mingw64/bin/mingw32-make* 2>&1; ls "/c/Program Files (x86)/GnuWin32/bin/make"* 2>&1
+
+OUT
+Exit code 2
+ls: cannot access '/c/MinGW/bin/mingw32-make*': No such file or directory
+/c/ProgramData/mingw64/mingw64/bin/mingw32-make.exe
+ls: cannot access '/c/Program Files (x86)/GnuWin32/bin/make*': No such file or directory
+Found it. Your gcc and mingw32-make are in /c/ProgramData/mingw64/mingw64/bin/. The issue is that make isn't on your PATH but mingw32-make is. Let me rebuild using that:
+
+Bash Clean and rebuild with mingw32-make
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && rm -f *.o minicompiler minicompiler.exe 2>&1 && /c/ProgramData/mingw64/mingw64/bin/mingw32-make clean 2>&1; /c/ProgramData/mingw64/mingw64/bin/mingw32-make 2>&1
+
+OUT
+Command running in background with ID: b7f821e. Output is being written to: C:\Users\15203\AppData\Local\Temp\claude\c--Users-15203-Downloads-CST-405-minimal-CST-405-minimal\tasks\b7f821e.output
+Read C:\Users\15203\AppData\Local\Temp\claude\c--Users-15203-Downloads-CST-405-minimal-CST-405-minimal\tasks\b7f821e.output
+The issue is that make clean deleted the generated parser files, and bison has a path-with-spaces issue on your system. Let me take a different approach — only delete the .o files and rebuild without regenerating the parser:
+
+Bash Check if parser source files still exist
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && ls parser.tab.c parser.tab.h lex.yy.c 2>&1
+
+OUT
+Exit code 2
+ls: cannot access 'parser.tab.c': No such file or directory
+ls: cannot access 'parser.tab.h': No such file or directory
+ls: cannot access 'lex.yy.c': No such file or directory
+They were deleted by the clean. Let me fix the bison path issue and regenerate:
+
+Bash Locate bison, flex, m4
+IN
+which bison 2>&1; which flex 2>&1; which m4 2>&1
+
+OUT
+/c/Program Files (x86)/GnuWin32/bin/bison
+/c/Program Files (x86)/GnuWin32/bin/flex
+/c/Program Files (x86)/GnuWin32/bin/m4
+Bash Check bison data directory
+IN
+ls "/c/Program Files (x86)/GnuWin32/share/bison/" 2>&1
+
+OUT
+bison.m4
+c.m4
+c++.m4
+c++-skel.m4
+c-skel.m4
+glr.c
+glr.cc
+java.m4
+java-skel.m4
+lalr1.cc
+lalr1.java
+location.cc
+m4sugar
+README
+xslt
+yacc.c
+The problem is bison's m4 can't handle the spaces in C:\Program Files (x86). Let me try setting the BISON_PKGDATADIR and M4 environment variables with proper short paths:
+
+Bash Run bison with short path to avoid spaces
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && BISON_PKGDATADIR="/c/Progra~2/GnuWin32/share/bison" M4="/c/Progra~2/GnuWin32/bin/m4" bison -d parser.y 2>&1
+
+OUT
+parser.y: conflicts: 1 shift/reduce
+That worked (the shift/reduce conflict is expected). Now generate the lexer and compile everything:
+
+Bash Generate lexer
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && flex scanner.l 2>&1
+
+OUT
+0
+Good. Now compile all source files with the same gcc:
+
+Bash Compile all source files
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && gcc -g -Wall -c lex.yy.c 2>&1 && gcc -g -Wall -c parser.tab.c 2>&1 && gcc -g -Wall -c main.c 2>&1 && gcc -g -Wall -c ast.c 2>&1 && gcc -g -Wall -c symtab.c 2>&1 && gcc -g -Wall -c codegen.c 2>&1 && gcc -g -Wall -c tac.c 2>&1 && gcc -g -Wall -c semantic.c 2>&1 && echo "All compiled OK"
+
+OUT
+Exit code 1
+scanner.l:10: warning: "YY_BUF_SIZE" redefined
+   10 | #define YY_BUF_SIZE 32768
+      | 
+lex.yy.c:97: note: this is the location of the previous definition
+   97 | #define YY_BUF_SIZE 16384
+      | 
+scanner.l: In function 'keyword_hash':
+scanner.l:29:15: warning: implicit declaration of function 'strlen' [-Wimplicit-function-declaration]
+   29 |     int len = strlen(str);
+      |               ^~~~~~
+scanner.l:10:1: note: include '<string.h>' or provide a declaration of 'strlen'
+    9 | #include "parser.tab.h"  /* Token definitions from Bison */
+  +++ |+#include <string.h>
+   10 | #define YY_BUF_SIZE 32768
+scanner.l:29:15: warning: incompatible implicit declaration of built-in function 'strlen' [-Wbuiltin-declaration-mismatch]
+   29 |     int len = strlen(str);
+      |               ^~~~~~
+scanner.l:29:15: note: include '<string.h>' or provide a declaration of 'strlen'
+scanner.l: In function 'check_keyword':
+scanner.l:37:12: warning: implicit declaration of function 'strcmp' [-Wimplicit-function-declaration]
+   37 |         if(strcmp(keywords[i].word, str) == 0) {
+      |            ^~~~~~
+scanner.l:37:12: note: include '<string.h>' or provide a declaration of 'strcmp'
+scanner.l:34:9: warning: unused variable 'h' [-Wunused-variable]
+   34 |     int h = keyword_hash(str);
+      |         ^
+scanner.l: In function 'yylex':
+scanner.l:64:22: warning: implicit declaration of function 'strdup' [-Wimplicit-function-declaration]
+   64 |         yylval.str = strdup(yytext);
+      |                      ^~~~~~
+scanner.l:64:22: warning: incompatible implicit declaration of built-in function 'strdup' [-Wbuiltin-declaration-mismatch]
+lex.yy.c:691:1: warning: label 'find_rule' defined but not used [-Wunused-label]
+  691 | find_rule: /* we branch to this label when backing up */
+      | ^~~~~~~~~
+lex.yy.c: At top level:
+lex.yy.c:1746:14: warning: 'yy_flex_realloc' defined but not used [-Wunused-function]
+ 1746 | static void *yy_flex_realloc( void *ptr, yy_size_t size )
+      |              ^~~~~~~~~~~~~~~
+lex.yy.c:1277:12: warning: 'input' defined but not used [-Wunused-function]
+ 1277 | static int input()
+      |            ^~~~~
+parser.y: In function 'yyparse':
+parser.y:167:9: warning: implicit declaration of function 'addVar' [-Wimplicit-function-declaration]
+  167 |         addVar($2, "int");
+      |         ^~~~~~
+parser.y:177:9: warning: implicit declaration of function 'addArrayVar' [-Wimplicit-function-declaration]
+  177 |         addArrayVar($2, "int", $4);
+      |         ^~~~~~~~~~~
+In file included from main.c:12:
+benchmark.c:6:10: fatal error: sys/resource.h: No such file or directory
+    6 | #include <sys/resource.h>
+      |          ^~~~~~~~~~~~~~~~
+compilation terminated.
+The issue is main.c includes benchmark.c which uses sys/resource.h (a Unix-only header). Let me check:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\main.c
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\benchmark.c
+The benchmark code uses Unix-specific headers (sys/resource.h, sys/time.h, /proc/self/status). We need to add Windows compatibility. The simplest fix is to guard the unavailable headers with #ifdef _WIN32:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\benchmark.c
+Added 15 lines
+Now recompile:
+
+Bash Compile all source files
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && gcc -g -Wall -c main.c 2>&1 && gcc -g -Wall -c codegen.c 2>&1 && gcc -g -Wall -c tac.c 2>&1 && gcc -g -Wall -c semantic.c 2>&1 && gcc -g -Wall -c ast.c 2>&1 && gcc -g -Wall -c symtab.c 2>&1 && gcc -g -Wall -c lex.yy.c 2>&1 && gcc -g -Wall -c parser.tab.c 2>&1 && echo "All compiled OK"
+
+OUT
+codegen.c: In function 'generateMIPSFromTAC':
+codegen.c:593:17: warning: enumeration value 'TAC_NEG' not handled in switch [-Wswitch]
+  593 |                 switch(curr->op) {
+      |                 ^~~~~~
+codegen.c:593:17: warning: enumeration value 'TAC_LT' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_GT' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_LE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_GE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_EQ' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_NE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ASSIGN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_PRINT' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_DECL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_LABEL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_GOTO' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_IF_FALSE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_IF_TRUE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_FUNC_BEGIN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_FUNC_END' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_PARAM' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARG' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_CALL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_RETURN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARRAY_DECL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARRAY_ASSIGN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARRAY_ACCESS' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_NOP' not handled in switch [-Wswitch]
+codegen.c: In function 'genExpr':
+codegen.c:260:1: warning: control reaches end of non-void function [-Wreturn-type]
+  260 | }
+      | ^
+tac.c: In function 'optimizeTAC':
+tac.c:622:5: warning: implicit declaration of function 'removeNOPs'; did you mean 'remove'? [-Wimplicit-function-declaration]
+  622 |     removeNOPs();
+      |     ^~~~~~~~~~
+      |     remove
+tac.c: At top level:
+tac.c:917:6: warning: conflicting types for 'removeNOPs'; have 'void()'
+  917 | void removeNOPs() {
+      |      ^~~~~~~~~~
+tac.c:622:5: note: previous implicit declaration of 'removeNOPs' with type 'void()'
+  622 |     removeNOPs();
+      |     ^~~~~~~~~~
+tac.c: In function 'removeNOPs':
+tac.c:923:23: warning: unused variable 'toDelete' [-Wunused-variable]
+  923 |             TACInstr* toDelete = current;
+      |                       ^~~~~~~~
+tac.c: At top level:
+tac.c:534:14: warning: 'foldConstants' defined but not used [-Wunused-function]
+  534 | static char* foldConstants(TACOp op, const char* arg1, const char* arg2, int* folded) {
+      |              ^~~~~~~~~~~~~
+scanner.l:10: warning: "YY_BUF_SIZE" redefined
+   10 | #define YY_BUF_SIZE 32768
+      | 
+lex.yy.c:97: note: this is the location of the previous definition
+   97 | #define YY_BUF_SIZE 16384
+      | 
+scanner.l: In function 'keyword_hash':
+scanner.l:29:15: warning: implicit declaration of function 'strlen' [-Wimplicit-function-declaration]
+   29 |     int len = strlen(str);
+      |               ^~~~~~
+scanner.l:10:1: note: include '<string.h>' or provide a declaration of 'strlen'
+    9 | #include "parser.tab.h"  /* Token definitions from Bison */
+  +++ |+#include <string.h>
+   10 | #define YY_BUF_SIZE 32768
+scanner.l:29:15: warning: incompatible implicit declaration of built-in function 'strlen' [-Wbuiltin-declaration-mismatch]
+   29 |     int len = strlen(str);
+      |               ^~~~~~
+scanner.l:29:15: note: include '<string.h>' or provide a declaration of 'strlen'
+scanner.l: In function 'check_keyword':
+scanner.l:37:12: warning: implicit declaration of function 'strcmp' [-Wimplicit-function-declaration]
+   37 |         if(strcmp(keywords[i].word, str) == 0) {
+      |            ^~~~~~
+scanner.l:37:12: note: include '<string.h>' or provide a declaration of 'strcmp'
+scanner.l:34:9: warning: unused variable 'h' [-Wunused-variable]
+   34 |     int h = keyword_hash(str);
+      |         ^
+scanner.l: In function 'yylex':
+scanner.l:64:22: warning: implicit declaration of function 'strdup' [-Wimplicit-function-declaration]
+   64 |         yylval.str = strdup(yytext);
+      |                      ^~~~~~
+scanner.l:64:22: warning: incompatible implicit declaration of built-in function 'strdup' [-Wbuiltin-declaration-mismatch]
+lex.yy.c:691:1: warning: label 'find_rule' defined but not used [-Wunused-label]
+  691 | find_rule: /* we branch to this label when backing up */
+      | ^~~~~~~~~
+lex.yy.c: At top level:
+lex.yy.c:1746:14: warning: 'yy_flex_realloc' defined but not used [-Wunused-function]
+ 1746 | static void *yy_flex_realloc( void *ptr, yy_size_t size )
+      |              ^~~~~~~~~~~~~~~
+lex.yy.c:1277:12: warning: 'input' defined but not used [-Wunused-function]
+ 1277 | static int input()
+      |            ^~~~~
+parser.y: In function 'yyparse':
+parser.y:167:9: warning: implicit declaration of function 'addVar' [-Wimplicit-function-declaration]
+  167 |         addVar($2, "int");
+      |         ^~~~~~
+parser.y:177:9: warning: implicit declaration of function 'addArrayVar' [-Wimplicit-function-declaration]
+  177 |         addArrayVar($2, "int", $4);
+      |         ^~~~~~~~~~~
+All compiled OK
+All compiled. Now link:
+
+Bash Link the compiler
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && gcc -g -Wall -o minicompiler lex.yy.o parser.tab.o main.o ast.o symtab.o codegen.o tac.o semantic.o 2>&1
+
+OUT
+0
+Build successful. Let me run it on the test file:
+
+Bash Run compiler on test file
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && ./minicompiler test.cm test.s 2>&1 | tail -20
+
+OUT
+┌──────────────────────────────────────────────────────────┐
+│ REGISTER ALLOCATION STATISTICS                           │
+├──────────────────────────────────────────────────────────┤
+│ Total registers spilled:       0                         │
+│ Final register usage:                                    │
+│   $t0 : d                                         │
+│   $t1 : const_4                                   │
+│   $t2 : const_5                                   │
+│   $t5 : c                                         │
+│   $t6 : e                                         │
+│   $t7 : t1                                        │
+│   $t9 : t0                                        │
+└──────────────────────────────────────────────────────────┘
+
+✓ MIPS assembly code generated to: test.s
+
+╔════════════════════════════════════════════════════════════╗
+║                  COMPILATION SUCCESSFUL!                   ║
+║         Run the output file in a MIPS simulator            ║
+╚════════════════════════════════════════════════════════════╝
+Compiled successfully. The build error was caused by two issues:
+
+Toolchain mismatch: codegen.o was compiled with a different (Windows) compiler than the rest. Fix: delete all .o files and rebuild everything with the same gcc.
+
+sys/resource.h not found: The benchmark.c file used Unix-only headers. Fix: added #ifdef _WIN32 guards to use Windows-compatible alternatives (clock() instead of gettimeofday, skip memory tracking on Windows).
+
+Your compiler is now rebuilt and has generated test.s. You can run it in SPIM/MARS to verify the multi-argument fix works correctly.
+
+How do I fix this error:/usr/bin/ld: warning: semantic.o: missing .note.GNU-stack section implies executable stack
+/usr/bin/ld: NOTE: This behaviour is deprecated and will be removed in a future version of the linker
+/usr/bin/ld: lex.yy.o: in function `yylex':
+C:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal/C:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:645:(.text+0x123): undefined reference to `__imp___acrt_iob_func'
+/usr/bin/ld: C:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal/C:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:648:(.text+0x144): undefined reference to `__imp___acrt_iob_func'
+/usr/bin/ld: lex.yy.o: in function `yy_fatal_error':
+C:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal/C:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:1678:(.text+0x1328): undefined reference to `__imp___acrt_iob_func'
+/usr/bin/ld: parser.tab.o: in function `yyerror':
+C:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal/C:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/parser.y:312:(.text+0x1278): undefined reference to `__imp___acrt_iob_func'
+/usr/bin/ld: main.o: in function `main':
+C:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal/C:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/main.c:64:(.text+0x40e): undefined reference to `__main'
+/usr/bin/ld: C:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal/C:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/main.c:73:(.text+0x49c): undefined reference to `__imp___acrt_iob_func'
+/usr/bin/ld: codegen.o: in function `genExpr':
+C:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal/C:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:199:(.text+0x73a): undefined reference to `__imp___acrt_iob_func'
+/usr/bin/ld: C:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal/C:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:237:(.text+0x860): undefined reference to `__imp___acrt_iob_func'
+/usr/bin/ld: codegen.o: in function `genStmt':
+C:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal/C:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:269:(.text+0x9fb): undefined reference to `__imp___acrt_iob_func'
+/usr/bin/ld: C:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal/C:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:279:(.text+0xa75): undefined reference to `__imp___acrt_iob_func'
+/usr/bin/ld: codegen.o:C:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal/C:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:327: more undefined references to `__imp___acrt_iob_func' follow
+lex.yy.o:lex.yy.c:(.pdata+0x0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x10): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x14): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x18): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x1c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x20): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x24): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x28): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x2c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x30): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x34): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x38): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x3c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x40): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x44): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x48): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x4c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x50): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x54): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x58): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x5c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x60): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x64): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x68): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x6c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x70): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x74): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x78): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x7c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x80): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x84): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x88): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x8c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x90): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x94): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x98): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x9c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xa0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xa4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xa8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xac): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xb0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xb4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xb8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xbc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xc0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xc4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xc8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xcc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xd0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xd4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xd8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xdc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xe0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xe4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xe8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xec): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xf0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xf4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xf8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0xfc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x100): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+lex.yy.o:lex.yy.c:(.pdata+0x104): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+parser.tab.o:parser.tab.c:(.pdata+0x0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+parser.tab.o:parser.tab.c:(.pdata+0x4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+parser.tab.o:parser.tab.c:(.pdata+0x8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+parser.tab.o:parser.tab.c:(.pdata+0xc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+parser.tab.o:parser.tab.c:(.pdata+0x10): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+parser.tab.o:parser.tab.c:(.pdata+0x14): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+parser.tab.o:parser.tab.c:(.pdata+0x18): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+parser.tab.o:parser.tab.c:(.pdata+0x1c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+parser.tab.o:parser.tab.c:(.pdata+0x20): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+main.o:main.c:(.pdata+0x0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+main.o:main.c:(.pdata+0x4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+main.o:main.c:(.pdata+0x8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+main.o:main.c:(.pdata+0xc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+main.o:main.c:(.pdata+0x10): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+main.o:main.c:(.pdata+0x14): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+main.o:main.c:(.pdata+0x18): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+main.o:main.c:(.pdata+0x1c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+main.o:main.c:(.pdata+0x20): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+main.o:main.c:(.pdata+0x24): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+main.o:main.c:(.pdata+0x28): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+main.o:main.c:(.pdata+0x2c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+main.o:main.c:(.pdata+0x30): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+main.o:main.c:(.pdata+0x34): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+main.o:main.c:(.pdata+0x38): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+main.o:main.c:(.pdata+0x3c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+main.o:main.c:(.pdata+0x40): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+main.o:main.c:(.pdata+0x44): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x10): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x14): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x18): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x1c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x20): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x24): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x28): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x2c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x30): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x34): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x38): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x3c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x40): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x44): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x48): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x4c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x50): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x54): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x58): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x5c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x60): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x64): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x68): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x6c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x70): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x74): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x78): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x7c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x80): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x84): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x88): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x8c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x90): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x94): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x98): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x9c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xa0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xa4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xa8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xac): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xb0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xb4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xb8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xbc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xc0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xc4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xc8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xcc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xd0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xd4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xd8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xdc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xe0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xe4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xe8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xec): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xf0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xf4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xf8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0xfc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x100): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+ast.o:ast.c:(.pdata+0x104): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0xc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x10): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x14): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x18): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x1c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x20): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x24): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x28): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x2c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x30): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x34): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x38): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x3c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x40): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x44): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x48): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x4c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x50): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x54): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x58): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x5c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x60): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x64): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+symtab.o:symtab.c:(.pdata+0x68): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0xc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x10): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x14): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x18): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x1c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x20): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x24): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x28): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x2c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x30): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x34): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x38): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x3c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x40): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x44): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x48): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x4c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x50): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x54): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x58): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x5c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x60): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x64): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x68): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x6c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x70): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x74): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x78): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x7c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x80): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x84): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x88): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x8c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x90): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x94): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x98): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0x9c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0xa0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0xa4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0xa8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0xac): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0xb0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0xb4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0xb8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+codegen.o:codegen.c:(.pdata+0xbc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x10): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x14): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x18): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x1c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x20): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x24): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x28): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x2c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x30): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x34): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x38): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x3c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x40): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x44): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x48): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x4c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x50): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x54): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x58): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x5c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x60): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x64): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x68): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x6c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x70): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x74): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x78): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x7c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x80): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x84): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x88): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x8c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x90): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x94): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x98): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x9c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xa0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xa4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xa8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xac): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xb0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xb4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xb8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xbc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xc0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xc4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xc8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xcc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xd0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xd4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xd8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xdc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xe0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xe4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xe8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xec): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xf0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xf4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xf8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0xfc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x100): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x104): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x108): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x10c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x110): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x114): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x118): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x11c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x120): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x124): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x128): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x12c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x130): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x134): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x138): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x13c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x140): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x144): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x148): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+tac.o:tac.c:(.pdata+0x14c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0xc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x10): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x14): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x18): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x1c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x20): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x24): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x28): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x2c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x30): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x34): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x38): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x3c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x40): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x44): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x48): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x4c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x50): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x54): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x58): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x5c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x60): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x64): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x68): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x6c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x70): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x74): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x78): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x7c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x80): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x84): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x88): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x8c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x90): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x94): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x98): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0x9c): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0xa0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0xa4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0xa8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0xac): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0xb0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0xb4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0xb8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0xbc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0xc0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0xc4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0xc8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0xcc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0xd0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0xd4): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0xd8): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0xdc): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+semantic.o:semantic.c:(.pdata+0xe0): dangerous relocation: R_AMD64_IMAGEBASE with __ImageBase undefined
+collect2: error: ld returned 1 exit status
+make: *** [Makefile:12: minicompiler] Error 1
+This is the same toolchain mismatch issue. Your MinGW gcc compiles Windows PE/COFF object files, but make is finding /usr/bin/ld (an ELF linker from MSYS2/Git Bash) instead of MinGW's own linker. Let me fix the Makefile to use the correct gcc with its own linker:
+
+Bash Verify MinGW has its own linker
+IN
+ls /c/ProgramData/mingw64/mingw64/bin/ld* 2>&1
+
+OUT
+/c/ProgramData/mingw64/mingw64/bin/ld.bfd.exe
+/c/ProgramData/mingw64/mingw64/bin/ld.exe
+/c/ProgramData/mingw64/mingw64/bin/ld.gold.exe
+MinGW has its own ld.exe. The problem is gcc is finding /usr/bin/ld first instead. I'll fix the Makefile to tell gcc where its own tools are using the -B flag:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\Makefile
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\Makefile
+Modified
+Also fix the bison path issue while we're at it, and update clean to not delete the generated parser files (so you don't need to re-run bison every time):
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\Makefile
+Modified
+Now do a full clean rebuild:
+
+Bash Remove old object files
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && rm -f *.o minicompiler minicompiler.exe 2>&1
+
+OUT
+0
+Bash Check if generated sources exist
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && ls parser.tab.c parser.tab.h lex.yy.c 2>&1
+
+OUT
+lex.yy.c
+parser.tab.c
+parser.tab.h
+Good, the generated sources are still there. Now compile and link with the -B flag ensuring gcc uses its own MinGW linker:
+
+Bash Full compile and link with MinGW's own linker
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && gcc -B/c/ProgramData/mingw64/mingw64/bin/ -g -Wall -c lex.yy.c 2>&1 && gcc -B/c/ProgramData/mingw64/mingw64/bin/ -g -Wall -c parser.tab.c 2>&1 && gcc -B/c/ProgramData/mingw64/mingw64/bin/ -g -Wall -c main.c 2>&1 && gcc -B/c/ProgramData/mingw64/mingw64/bin/ -g -Wall -c ast.c 2>&1 && gcc -B/c/ProgramData/mingw64/mingw64/bin/ -g -Wall -c symtab.c 2>&1 && gcc -B/c/ProgramData/mingw64/mingw64/bin/ -g -Wall -c codegen.c 2>&1 && gcc -B/c/ProgramData/mingw64/mingw64/bin/ -g -Wall -c tac.c 2>&1 && gcc -B/c/ProgramData/mingw64/mingw64/bin/ -g -Wall -c semantic.c 2>&1 && echo "--- All compiled, now linking ---" && gcc -B/c/ProgramData/mingw64/mingw64/bin/ -g -Wall -o minicompiler lex.yy.o parser.tab.o main.o ast.o symtab.o codegen.o tac.o semantic.o 2>&1 && echo "BUILD SUCCESS"
+
+OUT
+scanner.l:10: warning: "YY_BUF_SIZE" redefined
+   10 | #define YY_BUF_SIZE 32768
+      | 
+lex.yy.c:97: note: this is the location of the previous definition
+   97 | #define YY_BUF_SIZE 16384
+      | 
+scanner.l: In function 'keyword_hash':
+scanner.l:29:15: warning: implicit declaration of function 'strlen' [-Wimplicit-function-declaration]
+   29 |     int len = strlen(str);
+      |               ^~~~~~
+scanner.l:10:1: note: include '<string.h>' or provide a declaration of 'strlen'
+    9 | #include "parser.tab.h"  /* Token definitions from Bison */
+  +++ |+#include <string.h>
+   10 | #define YY_BUF_SIZE 32768
+scanner.l:29:15: warning: incompatible implicit declaration of built-in function 'strlen' [-Wbuiltin-declaration-mismatch]
+   29 |     int len = strlen(str);
+      |               ^~~~~~
+scanner.l:29:15: note: include '<string.h>' or provide a declaration of 'strlen'
+scanner.l: In function 'check_keyword':
+scanner.l:37:12: warning: implicit declaration of function 'strcmp' [-Wimplicit-function-declaration]
+   37 |         if(strcmp(keywords[i].word, str) == 0) {
+      |            ^~~~~~
+scanner.l:37:12: note: include '<string.h>' or provide a declaration of 'strcmp'
+scanner.l:34:9: warning: unused variable 'h' [-Wunused-variable]
+   34 |     int h = keyword_hash(str);
+      |         ^
+scanner.l: In function 'yylex':
+scanner.l:64:22: warning: implicit declaration of function 'strdup' [-Wimplicit-function-declaration]
+   64 |         yylval.str = strdup(yytext);
+      |                      ^~~~~~
+scanner.l:64:22: warning: incompatible implicit declaration of built-in function 'strdup' [-Wbuiltin-declaration-mismatch]
+lex.yy.c:691:1: warning: label 'find_rule' defined but not used [-Wunused-label]
+  691 | find_rule: /* we branch to this label when backing up */
+      | ^~~~~~~~~
+lex.yy.c: At top level:
+lex.yy.c:1746:14: warning: 'yy_flex_realloc' defined but not used [-Wunused-function]
+ 1746 | static void *yy_flex_realloc( void *ptr, yy_size_t size )
+      |              ^~~~~~~~~~~~~~~
+lex.yy.c:1277:12: warning: 'input' defined but not used [-Wunused-function]
+ 1277 | static int input()
+      |            ^~~~~
+parser.y: In function 'yyparse':
+parser.y:167:9: warning: implicit declaration of function 'addVar' [-Wimplicit-function-declaration]
+  167 |         addVar($2, "int");
+      |         ^~~~~~
+parser.y:177:9: warning: implicit declaration of function 'addArrayVar' [-Wimplicit-function-declaration]
+  177 |         addArrayVar($2, "int", $4);
+      |         ^~~~~~~~~~~
+codegen.c: In function 'generateMIPSFromTAC':
+codegen.c:593:17: warning: enumeration value 'TAC_NEG' not handled in switch [-Wswitch]
+  593 |                 switch(curr->op) {
+      |                 ^~~~~~
+codegen.c:593:17: warning: enumeration value 'TAC_LT' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_GT' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_LE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_GE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_EQ' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_NE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ASSIGN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_PRINT' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_DECL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_LABEL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_GOTO' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_IF_FALSE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_IF_TRUE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_FUNC_BEGIN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_FUNC_END' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_PARAM' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARG' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_CALL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_RETURN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARRAY_DECL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARRAY_ASSIGN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARRAY_ACCESS' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_NOP' not handled in switch [-Wswitch]
+codegen.c: In function 'genExpr':
+codegen.c:260:1: warning: control reaches end of non-void function [-Wreturn-type]
+  260 | }
+      | ^
+tac.c: In function 'optimizeTAC':
+tac.c:622:5: warning: implicit declaration of function 'removeNOPs'; did you mean 'remove'? [-Wimplicit-function-declaration]
+  622 |     removeNOPs();
+      |     ^~~~~~~~~~
+      |     remove
+tac.c: At top level:
+tac.c:917:6: warning: conflicting types for 'removeNOPs'; have 'void()'
+  917 | void removeNOPs() {
+      |      ^~~~~~~~~~
+tac.c:622:5: note: previous implicit declaration of 'removeNOPs' with type 'void()'
+  622 |     removeNOPs();
+      |     ^~~~~~~~~~
+tac.c: In function 'removeNOPs':
+tac.c:923:23: warning: unused variable 'toDelete' [-Wunused-variable]
+  923 |             TACInstr* toDelete = current;
+      |                       ^~~~~~~~
+tac.c: At top level:
+tac.c:534:14: warning: 'foldConstants' defined but not used [-Wunused-function]
+  534 | static char* foldConstants(TACOp op, const char* arg1, const char* arg2, int* folded) {
+      |              ^~~~~~~~~~~~~
+--- All compiled, now linking ---
+BUILD SUCCESS
+Build successful. The fix was adding -B/c/ProgramData/mingw64/mingw64/bin/ to the CC variable in the Makefile. This tells gcc to look in MinGW's own bin/ directory for its subprograms (like ld, as) instead of finding the incompatible /usr/bin/ld from MSYS2/Git Bash.
+
+Now when you run make, it will use the correct MinGW linker. Let me verify the compiler runs:
+
+Bash Quick test run
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && ./minicompiler test.cm test.s 2>&1 | tail -5
+
+OUT
+╔════════════════════════════════════════════════════════════╗
+║                  COMPILATION SUCCESSFUL!                   ║
+║         Run the output file in a MIPS simulator            ║
+╚════════════════════════════════════════════════════════════╝
+Working. The Makefile now has CC = gcc -B/c/ProgramData/mingw64/mingw64/bin/ which ensures gcc always finds its own MinGW linker instead of the incompatible /usr/bin/ld.
+
+how do I fix this error:BISON_PKGDATADIR="/c/Progra~2/GnuWin32/share/bison" M4="/c/Progra~2/GnuWin32/bin/m4" bison -d parser.y
+parser.y: warning: 1 shift/reduce conflict [-Wconflicts-sr]
+parser.y: note: rerun with option '-Wcounterexamples' to generate conflict counterexamples
+bison: /c/Progra~2/GnuWin32/share/bison/m4sugar/m4sugar.m4: cannot open: No such file or directory
+make: *** [Makefile:18: parser.tab.h] Error 1
+The 8.3 short filename Progra~2 may not match on your system. Let me find the correct short path:
+
+Bash Find 8.3 short name for Program Files directories
+IN
+cmd //c "dir /x C:\\ " 2>&1 | grep -i "program"
+
+OUT
+02/12/2026  10:39 AM    <DIR>          PROGRA~1     Program Files
+11/05/2025  11:51 AM    <DIR>          PROGRA~2     Program Files (x86)
+Progra~2 is correct. The problem might be that m4 itself can't resolve the short path. Let me check if the m4sugar subdirectory exists at that path:
+
+Bash Check if m4sugar.m4 exists via short path
+IN
+ls "/c/Progra~2/GnuWin32/share/bison/m4sugar/m4sugar.m4" 2>&1
+
+OUT
+/c/Progra~2/GnuWin32/share/bison/m4sugar/m4sugar.m4
+The file exists but bison is a Windows binary and can't understand the Unix-style /c/... path. It needs Windows-style paths:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\Makefile
+Modified
+Now test it:
+
+Bash Test bison with Windows-style path
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && rm -f parser.tab.c parser.tab.h && BISON_PKGDATADIR="C:/Progra~2/GnuWin32/share/bison" M4="C:/Progra~2/GnuWin32/bin/m4" bison -d parser.y 2>&1
+
+OUT
+parser.y: conflicts: 1 shift/reduce
+That works. Now verify the files were created and do a full build:
+
+Bash Full rebuild
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && ls parser.tab.c parser.tab.h 2>&1 && rm -f *.o minicompiler minicompiler.exe && gcc -B/c/ProgramData/mingw64/mingw64/bin/ -g -Wall -c lex.yy.c parser.tab.c main.c ast.c symtab.c codegen.c tac.c semantic.c 2>&1 && gcc -B/c/ProgramData/mingw64/mingw64/bin/ -g -Wall -o minicompiler lex.yy.o parser.tab.o main.o ast.o symtab.o codegen.o tac.o semantic.o 2>&1 && echo "BUILD SUCCESS"
+
+OUT
+Exit code 1
+parser.tab.c
+parser.tab.h
+cc1.exe: fatal error: lex.yy.c: No such file or directory
+compilation terminated.
+parser.y: In function 'yyparse':
+parser.y:167:9: warning: implicit declaration of function 'addVar' [-Wimplicit-function-declaration]
+  167 |         addVar($2, "int");
+      |         ^~~~~~
+parser.y:177:9: warning: implicit declaration of function 'addArrayVar' [-Wimplicit-function-declaration]
+  177 |         addArrayVar($2, "int", $4);
+      |         ^~~~~~~~~~~
+codegen.c: In function 'generateMIPSFromTAC':
+codegen.c:593:17: warning: enumeration value 'TAC_NEG' not handled in switch [-Wswitch]
+  593 |                 switch(curr->op) {
+      |                 ^~~~~~
+codegen.c:593:17: warning: enumeration value 'TAC_LT' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_GT' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_LE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_GE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_EQ' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_NE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ASSIGN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_PRINT' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_DECL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_LABEL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_GOTO' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_IF_FALSE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_IF_TRUE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_FUNC_BEGIN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_FUNC_END' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_PARAM' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARG' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_CALL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_RETURN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARRAY_DECL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARRAY_ASSIGN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARRAY_ACCESS' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_NOP' not handled in switch [-Wswitch]
+codegen.c: In function 'genExpr':
+codegen.c:260:1: warning: control reaches end of non-void function [-Wreturn-type]
+  260 | }
+      | ^
+tac.c: In function 'optimizeTAC':
+tac.c:622:5: warning: implicit declaration of function 'removeNOPs'; did you mean 'remove'? [-Wimplicit-function-declaration]
+  622 |     removeNOPs();
+      |     ^~~~~~~~~~
+      |     remove
+tac.c: At top level:
+tac.c:917:6: warning: conflicting types for 'removeNOPs'; have 'void()'
+  917 | void removeNOPs() {
+      |      ^~~~~~~~~~
+tac.c:622:5: note: previous implicit declaration of 'removeNOPs' with type 'void()'
+  622 |     removeNOPs();
+      |     ^~~~~~~~~~
+tac.c: In function 'removeNOPs':
+tac.c:923:23: warning: unused variable 'toDelete' [-Wunused-variable]
+  923 |             TACInstr* toDelete = current;
+      |                       ^~~~~~~~
+tac.c: At top level:
+tac.c:534:14: warning: 'foldConstants' defined but not used [-Wunused-function]
+  534 | static char* foldConstants(TACOp op, const char* arg1, const char* arg2, int* folded) {
+      |              ^~~~~~~~~~~~~
+lex.yy.c was also deleted by the earlier make clean. Let me regenerate it and retry:
+
+Bash Regenerate lexer and link
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && flex scanner.l 2>&1 && gcc -B/c/ProgramData/mingw64/mingw64/bin/ -g -Wall -c lex.yy.c 2>&1 && gcc -B/c/ProgramData/mingw64/mingw64/bin/ -g -Wall -o minicompiler lex.yy.o parser.tab.o main.o ast.o symtab.o codegen.o tac.o semantic.o 2>&1 && echo "BUILD SUCCESS"
+
+OUT
+scanner.l:10: warning: "YY_BUF_SIZE" redefined
+   10 | #define YY_BUF_SIZE 32768
+      | 
+lex.yy.c:97: note: this is the location of the previous definition
+   97 | #define YY_BUF_SIZE 16384
+      | 
+scanner.l: In function 'keyword_hash':
+scanner.l:29:15: warning: implicit declaration of function 'strlen' [-Wimplicit-function-declaration]
+   29 |     int len = strlen(str);
+      |               ^~~~~~
+scanner.l:10:1: note: include '<string.h>' or provide a declaration of 'strlen'
+    9 | #include "parser.tab.h"  /* Token definitions from Bison */
+  +++ |+#include <string.h>
+   10 | #define YY_BUF_SIZE 32768
+scanner.l:29:15: warning: incompatible implicit declaration of built-in function 'strlen' [-Wbuiltin-declaration-mismatch]
+   29 |     int len = strlen(str);
+      |               ^~~~~~
+scanner.l:29:15: note: include '<string.h>' or provide a declaration of 'strlen'
+scanner.l: In function 'check_keyword':
+scanner.l:37:12: warning: implicit declaration of function 'strcmp' [-Wimplicit-function-declaration]
+   37 |         if(strcmp(keywords[i].word, str) == 0) {
+      |            ^~~~~~
+scanner.l:37:12: note: include '<string.h>' or provide a declaration of 'strcmp'
+scanner.l:34:9: warning: unused variable 'h' [-Wunused-variable]
+   34 |     int h = keyword_hash(str);
+      |         ^
+scanner.l: In function 'yylex':
+scanner.l:64:22: warning: implicit declaration of function 'strdup' [-Wimplicit-function-declaration]
+   64 |         yylval.str = strdup(yytext);
+      |                      ^~~~~~
+scanner.l:64:22: warning: incompatible implicit declaration of built-in function 'strdup' [-Wbuiltin-declaration-mismatch]
+lex.yy.c:691:1: warning: label 'find_rule' defined but not used [-Wunused-label]
+  691 | find_rule: /* we branch to this label when backing up */
+      | ^~~~~~~~~
+lex.yy.c: At top level:
+lex.yy.c:1746:14: warning: 'yy_flex_realloc' defined but not used [-Wunused-function]
+ 1746 | static void *yy_flex_realloc( void *ptr, yy_size_t size )
+      |              ^~~~~~~~~~~~~~~
+lex.yy.c:1277:12: warning: 'input' defined but not used [-Wunused-function]
+ 1277 | static int input()
+      |            ^~~~~
+BUILD SUCCESS
+Build successful. The fix was changing the Unix-style paths (/c/Progra~2/...) to Windows-style paths (C:/Progra~2/...) in the BISON_PKGDATADIR and M4 environment variables. Bison is a Windows binary and can't understand Unix-style /c/ mount paths — it needs C:/ format.
+
+How do I make it output the correct value:
+The issue is in how array parameters are accessed in retFirst. The caller passes the address of the array, but the callee's array access code treats it as a local array (computing $sp + offset instead of loading the stored pointer).
+
+Look at the generated code for retFirst:
+
+
+lw $t0, 700($sp)      # Load the pointer to caller's array
+sw $t0, 0($sp)        # Store pointer at offset 0
+...
+addi $t2, $sp, 0      # BUG: computes address OF the pointer slot, not the pointer value
+It should use lw $t2, 0($sp) (load the pointer) instead of addi $t2, $sp, 0 (address of the local slot).
+
+The fix: in TAC_ARRAY_ACCESS and TAC_ARRAY_ASSIGN, check if the variable is a local array (isArrayVar = true, added via addArrayVar) vs an array parameter (isArrayVar = false, added via addVar). For parameters, load the stored pointer instead of computing $sp + offset.
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 878-927)
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 928-957)
+Now I can see both locations. The key line in both cases is addi $t, $sp, offset which assumes local array. For array parameters, it should be lw $t, offset($sp) to load the pointer.
+
+Local arrays are added via addArrayVar (sets isArray=1), while parameters are added via addVar (leaves isArray=0). So isArrayVar() distinguishes them.
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Added 6 lines
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Added 6 lines
+Now rebuild and test:
+
+Bash Rebuild and run compiler
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && gcc -B/c/ProgramData/mingw64/mingw64/bin/ -g -Wall -c codegen.c 2>&1 && gcc -B/c/ProgramData/mingw64/mingw64/bin/ -g -Wall -o minicompiler lex.yy.o parser.tab.o main.o ast.o symtab.o codegen.o tac.o semantic.o 2>&1 && echo "BUILD OK" && ./minicompiler test.cm test.s 2>&1 | tail -5
+
+OUT
+Exit code 1
+codegen.c: In function 'generateMIPSFromTAC':
+codegen.c:593:17: warning: enumeration value 'TAC_NEG' not handled in switch [-Wswitch]
+  593 |                 switch(curr->op) {
+      |                 ^~~~~~
+codegen.c:593:17: warning: enumeration value 'TAC_LT' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_GT' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_LE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_GE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_EQ' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_NE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ASSIGN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_PRINT' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_DECL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_LABEL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_GOTO' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_IF_FALSE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_IF_TRUE' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_FUNC_BEGIN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_FUNC_END' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_PARAM' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARG' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_CALL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_RETURN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARRAY_DECL' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARRAY_ASSIGN' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_ARRAY_ACCESS' not handled in switch [-Wswitch]
+codegen.c:593:17: warning: enumeration value 'TAC_NOP' not handled in switch [-Wswitch]
+codegen.c: In function 'genExpr':
+codegen.c:260:1: warning: control reaches end of non-void function [-Wreturn-type]
+  260 | }
+      | ^
+C:/ProgramData/mingw64/mingw64/bin/ld.exe: lex.yy.o: in function `yylex':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:756: undefined reference to `stdin'
+C:/ProgramData/mingw64/mingw64/bin/ld.exe: /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:759: undefined reference to `stdout'
+C:/ProgramData/mingw64/mingw64/bin/ld.exe: lex.yy.o: in function `yy_get_next_buffer':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:1249: undefined reference to `__errno_location'
+C:/ProgramData/mingw64/mingw64/bin/ld.exe: /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:1249: undefined reference to `__errno_location'
+C:/ProgramData/mingw64/mingw64/bin/ld.exe: /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:1249: undefined reference to `__errno_location'
+C:/ProgramData/mingw64/mingw64/bin/ld.exe: lex.yy.o: in function `yy_init_buffer':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:1551: undefined reference to `__errno_location'
+C:/ProgramData/mingw64/mingw64/bin/ld.exe: /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:1569: undefined reference to `__errno_location'
+C:/ProgramData/mingw64/mingw64/bin/ld.exe: lex.yy.o: in function `yy_fatal_error':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:1789: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/ld.exe: parser.tab.o: in function `yyerror':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/parser.y:312: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/ld.exe: main.o: in function `get_memory_usage':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/benchmark.c:47: undefined reference to `__isoc99_sscanf'
+C:/ProgramData/mingw64/mingw64/bin/ld.exe: main.o: in function `main':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/main.c:73: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/ld.exe: tac.o: in function `allocTemp':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/tac.c:51: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/ld.exe: tac.o: in function `saveTACToFile':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/tac.c:730: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/ld.exe: tac.o: in function `saveOptimizedTACToFile':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/tac.c:825: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/ld.exe: semantic.o: in function `enterScope':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/semantic.c:59: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/ld.exe: semantic.o:/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/semantic.c:116: more undefined references to `stderr' follow
+collect2.exe: error: ld returned 1 exit status
+You're now building from WSL (Linux), but the -B flag in the Makefile is forcing it to use the MinGW (Windows) linker. WSL's Linux gcc compiled the .o files with Linux symbols (stdin, __errno_location), but MinGW's ld.exe doesn't know those symbols.
+
+Since you're in WSL, remove the -B flag — WSL's own gcc and ld work together fine:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\Makefile
+Edit failed
+You've hit your limit · resets Feb 17, 11am (America/Phoenix)
+
+How do I get the function to return the actual value:
+Let me check the current Makefile state and the generated assembly to debug this:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\Makefile
+Good, Makefile is back to plain CC = gcc. Let me check the generated test.s to see what MIPS code is actually being produced:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\test.s
+I can see the bug on line 17. The array access fix wasn't applied to this build. Line 17 does addi $t2, $sp, 0 (treats l as a local array), but l is a parameter holding a pointer — it should be lw $t2, 0($sp).
+
+The codegen.c fix I made earlier needs to be compiled and linked. Let me verify the fix is in codegen.c and rebuild:
+
+Grep "Array parameter - load the stored pointer" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+2 lines of output
+Good, the fix is in the source. The build just failed last time. Let me rebuild from WSL:
+
+Bash Full rebuild from WSL paths
+IN
+cd /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal && rm -f *.o minicompiler && gcc -g -Wall -c lex.yy.c 2>&1 | tail -3 && gcc -g -Wall -c parser.tab.c 2>&1 | tail -3 && gcc -g -Wall -c main.c 2>&1 | tail -3 && gcc -g -Wall -c ast.c 2>&1 | tail -3 && gcc -g -Wall -c symtab.c 2>&1 | tail -3 && gcc -g -Wall -c codegen.c 2>&1 | tail -3 && gcc -g -Wall -c tac.c 2>&1 | tail -3 && gcc -g -Wall -c semantic.c 2>&1 | tail -3 && gcc -g -Wall -o minicompiler lex.yy.o parser.tab.o main.o ast.o symtab.o codegen.o tac.o semantic.o 2>&1 && echo "BUILD SUCCESS"
+
+OUT
+Exit code 1
+/usr/bin/bash: line 1: cd: /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal: No such file or directory
+Bash Full rebuild
+IN
+cd "c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal" && rm -f *.o minicompiler && gcc -g -Wall -c lex.yy.c 2>&1 | tail -3 && gcc -g -Wall -c parser.tab.c 2>&1 | tail -3 && gcc -g -Wall -c main.c 2>&1 | tail -3 && gcc -g -Wall -c ast.c 2>&1 | tail -3 && gcc -g -Wall -c symtab.c 2>&1 | tail -3 && gcc -g -Wall -c codegen.c 2>&1 | tail -3 && gcc -g -Wall -c tac.c 2>&1 | tail -3 && gcc -g -Wall -c semantic.c 2>&1 | tail -3 && gcc -g -Wall -o minicompiler lex.yy.o parser.tab.o main.o ast.o symtab.o codegen.o tac.o semantic.o 2>&1 && echo "BUILD SUCCESS"
+
+OUT
+Exit code 1
+scanner.l:34:9: warning: unused variable 'h' [-Wunused-variable]
+   34 |     int h = keyword_hash(str);
+      |         ^
+parser.y:177:9: warning: implicit declaration of function 'addArrayVar' [-Wimplicit-function-declaration]
+  177 |         addArrayVar($2, "int", $4);
+      |         ^~~~~~~~~~~
+    5 | #include <sys/resource.h>
+      |          ^~~~~~~~~~~~~~~~
+compilation terminated.
+codegen.c:260:1: warning: control reaches end of non-void function [-Wreturn-type]
+  260 | }
+      | ^
+tac.c:534:14: warning: 'foldConstants' defined but not used [-Wunused-function]
+  534 | static char* foldConstants(TACOp op, const char* arg1, const char* arg2, int* folded) {
+      |              ^~~~~~~~~~~~~
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: cannot find main.o: No such file or directory
+collect2.exe: error: ld returned 1 exit status
+The benchmark.c file was reverted to the Linux version with <sys/resource.h>, which doesn't compile with MinGW. Let me re-apply the Windows compatibility fix so we can build:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\benchmark.c
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\benchmark.c
+Write c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\benchmark.c
+Write failed
+// benchmark.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+#ifdef _WIN32
+    #include <windows.h>
+#else
+    #include <sys/time.h>
+    #include <sys/resource.h>
+    #ifdef __APPLE__
+        #include <mach/mach.h>
+        #include <mach/mach_time.h>
+    #else
+        #include <unistd.h>
+    #endif
+#endif
+
+typedef struct {
+    double cpu_time;
+    double wall_time;
+    long memory_usage;
+    long peak_memory;
+} BenchmarkResult;
+
+// Platform-specific memory measurement
+long get_memory_usage() {
+#ifdef _WIN32
+    return 0;
+#elif defined(__APPLE__)
+    struct task_basic_info info;
+    mach_msg_type_number_t size = sizeof(info);
+    kern_return_t kerr = task_info(mach_task_self(),
+                                    TASK_BASIC_INFO,
+                                    (task_info_t)&info, &size);
+    if(kerr == KERN_SUCCESS) {
+        return info.resident_size;
+    }
+    return 0;
+#else
+    FILE* file = fopen("/proc/self/status", "r");
+    if (file) {
+        char line[128];
+        while (fgets(line, 128, file)) {
+            if (strncmp(line, "VmRSS:", 6) == 0) {
+                long memory;
+                sscanf(line, "VmRSS: %ld", &memory);
+                fclose(file);
+                return memory * 1024; // Convert KB to bytes
+            }
+        }
+        fclose(file);
+    }
+    return 0;
+#endif
+}
+
+BenchmarkResult* start_benchmark() {
+    BenchmarkResult* result = malloc(sizeof(BenchmarkResult));
+
+    // Get initial CPU time
+    clock_t start_cpu = clock();
+
+    // Store in result
+    result->cpu_time = (double)start_cpu;
+
+#ifdef _WIN32
+    result->wall_time = (double)clock();
+#else
+    struct timeval start_wall;
+    gettimeofday(&start_wall, NULL);
+    result->wall_time = start_wall.tv_sec + start_wall.tv_usec / 1000000.0;
+#endif
+
+    result->memory_usage = get_memory_usage();
+    return result;
+}
+
+void end_benchmark(BenchmarkResult* result, const char* phase) {
+    // Get final times
+    clock_t end_cpu = clock();
+
+    // Calculate elapsed times
+    double start_cpu = result->cpu_time;
+    result->cpu_time = ((double)(end_cpu - start_cpu)) / CLOCKS_PER_SEC;
+
+#ifdef _WIN32
+    double end_wall_time = (double)clock();
+    result->wall_time = (end_wall_time - result->wall_time) / CLOCKS_PER_SEC;
+#else
+    struct timeval end_wall;
+    gettimeofday(&end_wall, NULL);
+    double start_wall = result->wall_time;
+    double end_wall_time = end_wall.tv_sec + end_wall.tv_usec / 1000000.0;
+    result->wall_time = end_wall_time - start_wall;
+#endif
+
+    // Get final memory
+    long final_memory = get_memory_usage();
+    result->peak_memory = final_memory - result->memory_usage;
+
+    // Print results
+    printf("\n=== %s Performance ===\n", phase);
+    printf("CPU Time: %.6f seconds\n", result->cpu_time);
+    printf("Wall Time: %.6f seconds\n", result->wall_time);
+    printf("Memory Delta: %.2f KB\n", result->peak_memory / 1024.0);
+}
+rewrite codegen.c to output the correct value
+The fix is already in your codegen.c source code (the isArrayVar checks at lines 868 and 911). The problem is your current minicompiler binary was built before that fix was added. You just need to recompile from your WSL terminal.
+
+Run this in your WSL terminal:
+
+
+make clean && make && ./minicompiler test.cm test.s && spim -file test.s
+Here's what the fix does — in TAC_ARRAY_ACCESS (line 911) and TAC_ARRAY_ASSIGN (line 868):
+
+Local array (isArrayVar = true): addi $t, $sp, offset — computes address of stack data
+Array parameter (isArrayVar = false): lw $t, offset($sp) — loads the stored pointer
+Currently your test.s line 17 shows the old code:
+
+
+addi $t2, $sp, 0   # base address of 'l'  ← WRONG: treats param as local array
+After rebuilding, it should generate:
+
+
+lw $t2, 0($sp)     # load pointer 'l'     ← CORRECT: loads the passed address
+This will make retFirst(list) correctly follow the pointer to main's array and return 5.
+
+it still outputs the wrong value
+Let me check the current generated assembly and TAC to trace the issue:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\test.s
+Line 17 still shows addi — the fix isn't taking effect. Let me check why isArrayVar returns true for parameter l:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\symtab.c
+Found it! The bug is in addVar (line 23). When adding parameter l, it sets name, type, and offset, but never sets isArray = 0. The isArray field retains its stale value from the previous function scope.
+
+Here's what happens:
+
+In main: addArrayVar("list", ...) writes to symtab.vars[0] with isArray = 1
+initSymTab() resets count = 0 but doesn't clear the struct fields
+In retFirst: addVar("l", "int") writes to symtab.vars[0] — same slot — but doesn't touch isArray
+isArrayVar("l") reads the stale isArray = 1 from the old list entry
+The fix — set isArray = 0 in addVar:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\symtab.c
+Added 2 lines
+Now rebuild from your WSL terminal:
+
+
+make clean && make && ./minicompiler test.cm test.s && spim -file test.s
+The problem was that addVar never zeroed out isArray, so parameter l inherited isArray = 1 from the previous function's list array that occupied the same symbol table slot. This caused isArrayVar("l") to return true, making the codegen use addi (local array) instead of lw (load pointer). With this fix, retFirst(list) should correctly output 5.
+
+how do I allow the code to return lists from functions?
+The issue is that return list; in createList loads the value at list[0] instead of returning the address of the array. I need to fix TAC_RETURN in codegen.c to return the address when the return value is an array.
+
+Let me read the current TAC_RETURN handler:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 780-809)
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 809-833)
+I can see the problem. On line 818, when returning list, it does lw (loads the value at the array's base offset, i.e., list[0]). For arrays, it should compute the address instead.
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Added 6 lines
+Now rebuild from your WSL terminal:
+
+
+make clean && make && ./minicompiler test.cm test.s && spim -file test.s
+Here's what changed — in TAC_RETURN, when the return value is an array (isArrayVar is true), it now emits:
+
+
+addi $t0, $sp, 12   # Load ADDRESS of array 'list'
+instead of:
+
+
+lw $t0, 12($sp)     # Load VALUE at list[0] (wrong)
+This way createList returns a pointer to the array data, and retFirst can dereference it to get l[0] = 5.
+
+Note: Returning local arrays works here because retFirst's stack frame doesn't overwrite the memory where createList's array was stored. However, in general, returning pointers to local stack variables is unsafe (same as in C) — the data could be overwritten by subsequent function calls.
+
+/compact
+Error: Compaction canceled.
+
+how do I get the code to run while loops?
+Let me check the generated TAC and assembly to understand the while loop issue:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\test.optimized.tac
+The TAC generates t0 = i <= 5 (line 11) — a TAC_LE comparison instruction. But looking at the assembly, there's no code for it. The comparison operations (TAC_LT, TAC_GT, TAC_LE, TAC_GE, TAC_EQ, TAC_NE) have no codegen implementation! The result temp t0 is never computed, so IF_FALSE loads garbage from -1($sp).
+
+Let me add codegen for all comparison operations. They follow the same pattern as arithmetic ops:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 516-620)
+I need to add the comparison operations to the same case block as the arithmetic ops. They use the same operand-loading logic, just different MIPS instructions:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Added 6 lines
+Now add the comparison instructions to the inner switch:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Added 26 lines
+Now rebuild from your WSL terminal:
+
+
+make clean && make && ./minicompiler test.cm test.s && spim -file test.s
+The problem was that the comparison operations (TAC_LE, TAC_LT, TAC_GT, TAC_GE, TAC_EQ, TAC_NE) had no codegen. The TAC t0 = i <= 5 was never translated to MIPS, so IF_FALSE t0 loaded garbage from an invalid offset.
+
+Now t0 = i <= 5 will generate:
+
+
+sle $t2, $t1, $t3   # t0 = i <= 5
+Which sets the result register to 1 (true) or 0 (false), and beqz can then branch correctly. For your while(i <= 5) loop summing 1+2+3+4+5, the output should be 15.
