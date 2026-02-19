@@ -57,7 +57,17 @@ extern int yydebug;
     NUM = 258,                     /* NUM  */
     ID = 259,                      /* ID  */
     INT = 260,                     /* INT  */
-    PRINT = 261                    /* PRINT  */
+    FLOAT = 261,                   /* FLOAT  */
+    PRINT = 262,                   /* PRINT  */
+    RETURN = 263,                  /* RETURN  */
+    IF = 264,                      /* IF  */
+    ELSE = 265,                    /* ELSE  */
+    WHILE = 266,                   /* WHILE  */
+    LE = 267,                      /* LE  */
+    GE = 268,                      /* GE  */
+    EQ = 269,                      /* EQ  */
+    NE = 270,                      /* NE  */
+    UMINUS = 271                   /* UMINUS  */
   };
   typedef enum yytokentype yytoken_kind_t;
 #endif
@@ -66,13 +76,13 @@ extern int yydebug;
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 25 "parser.y"
+#line 23 "parser.y"
 
-    int num;                /* For integer literals */
-    char* str;              /* For identifiers */
-    struct ASTNode* node;   /* For AST nodes */
+    int num;
+    char* str;
+    struct ASTNode* node;
 
-#line 76 "parser.tab.h"
+#line 86 "parser.tab.h"
 
 };
 typedef union YYSTYPE YYSTYPE;
