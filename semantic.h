@@ -3,22 +3,21 @@
 
 #include "ast.h"
 
-/* SEMANTIC ANALYZER
- * Performs semantic checks on the AST before code generation
- * Checks for semantic errors like:
- * - Using undeclared variables
- * - Duplicate variable declarations
- * - Type mismatches (in future extensions)
+/* SEMANTIC ANALYSIS - WITH FUNCTION SUPPORT
+ * This phase checks the semantic correctness of the program
+ * Ensures variables are declared before use, no redeclarations, etc.
+ * Now supports functions, scopes, parameters, and control flow
  */
 
-/* Global semantic error tracking */
-extern int semanticErrors;
+/* SEMANTIC ERROR TRACKING */
+typedef struct {
+    int errorCount;           /* Number of semantic errors found */
+    int warningCount;         /* Number of warnings issued */
+} SemanticInfo;
 
 /* SEMANTIC ANALYSIS FUNCTIONS */
-void initSemantic();                    /* Initialize semantic analyzer */
-int analyzeProgram(ASTNode* root);      /* Analyze entire program, returns 1 if valid, 0 if errors */
-void analyzeStmt(ASTNode* node);        /* Analyze a statement */
-void analyzeExpr(ASTNode* node);        /* Analyze an expression */
-void reportSemanticError(const char* msg);  /* Report a semantic error */
+void initSemantic();                     /* Initialize semantic analyzer */
+int performSemanticAnalysis(ASTNode* root);  /* Run semantic checks on AST, returns 0 if successful */
+void printSemanticSummary();             /* Print summary of semantic analysis results */
 
 #endif
