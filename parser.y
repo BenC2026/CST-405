@@ -29,14 +29,14 @@ ASTNode* root = NULL;
 /* TOKEN DECLARATIONS */
 %token <num> NUM
 %token <str> ID
-%token INT FLOAT PRINT RETURN IF ELSE WHILE
+%token INT FLOAT PRINT RETURN IF ELSE WHILE FOR
 %token LE GE EQ NE
 
 /* NON-TERMINAL TYPES */
 %type <node> program decl_or_func_list decl_or_func
 %type <node> func_def params param_list param
 %type <node> stmt_list stmt decl assign expr print_stmt return_stmt
-%type <node> if_stmt while_stmt block
+%type <node> if_stmt while_stmt for_stmt for_init for_cond for_update block
 %type <node> func_call arg_list args
 
 /* OPERATOR PRECEDENCE AND ASSOCIATIVITY */
@@ -156,6 +156,7 @@ stmt:
     | return_stmt
     | if_stmt
     | while_stmt
+    | for_stmt
     | block
     | func_call ';' { $$ = $1; }
     ;
@@ -215,6 +216,42 @@ if_stmt:
 while_stmt:
     WHILE '(' expr ')' stmt {
         $$ = createWhile($3, $5);
+    }
+    ;
+
+/* FOR LOOP */
+for_stmt:
+    FOR '(' for_init ';' for_cond ';' for_update ')' stmt {
+        $$ = createFor($3, $5, $7, $9);
+    }
+    ;
+
+for_init:
+    /* empty */ {$$ = NULL;}
+    | ID '=' expr {
+        $$ = createAssign($1, $3);
+        free($1);
+    }
+    | ID '[' expr ']' '=' expr {
+        $$ = createArrayAssign($1, $3, $6);
+        free($1);
+    }
+    ;
+
+for_cond:
+    /* empty */ {$$ = NULL;}
+    | expr {$$ = $1;}
+    ;
+
+for_update:
+    /* empty */ {$$ = NULL;}
+    | ID '=' expr {
+        $$ = createAssign($1, $3);
+        free($1);
+    }
+    | ID '[' expr ']' '=' expr {
+        $$ = createArrayAssign($1, $3, $6);
+        free($1);
     }
     ;
 
