@@ -14,7 +14,7 @@ struct keyword {
     int token;
 };
 
-#define NUM_KEYWORDS 7
+#define NUM_KEYWORDS 8
 static struct keyword keywords[] = {
     {"int", INT},
     {"float", FLOAT},
@@ -22,7 +22,8 @@ static struct keyword keywords[] = {
     {"return", RETURN},
     {"if", IF},
     {"else", ELSE},
-    {"while", WHILE}
+    {"while", WHILE},
+    {"for", FOR}
 };
 
 int keyword_hash(const char* str) {
@@ -57,6 +58,7 @@ int check_keyword(const char* str) {
 "if"            { return IF; }
 "else"          { return ELSE; }
 "while"         { return WHILE; }
+"for"           { return FOR; }
 
 [a-zA-Z_][a-zA-Z0-9_]* {
     int token = check_keyword(yytext);
