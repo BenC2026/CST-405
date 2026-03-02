@@ -323,6 +323,41 @@ static void generateTACStmt(ASTNode* node) {
             break;
         }
 
+        case NODE_FOR:
+            /* Generate labels */
+            char* labelStart = newLabel();
+            char* labelEnd = newLabel();
+
+            /* Initialization */
+            if (node->data.for_stmt.init) {
+                generateTACStmt(node->data.for_stmt.init);
+            }
+
+            /* Start label */
+            appendTAC(createTAC(TAC_LABEL, NULL, NULL, labelStart, NULL));
+
+            /* Condition */
+            if (node->data.for_stmt.condition) {
+                char* cond = generateTACExpr(node->data.for_stmt.condition);
+                appendTAC(createTAC(TAC_IF_FALSE, cond, labelEnd, NULL, NULL));
+                freeTemp(cond);
+            }
+
+            /* Body */
+            generateTACStmt(node->data.for_stmt.body);
+
+            /* Update */
+            if (node->data.for_stmt.update) {
+                generateTACStmt(node->data.for_stmt.update);
+            }
+
+            /* Jump back to start */
+            appendTAC(createTAC(TAC_GOTO, labelStart, NULL, NULL, NULL));
+
+            /* End label */
+            appendTAC(createTAC(TAC_LABEL, NULL, NULL, labelEnd, NULL));
+            break;
+
         case NODE_BLOCK:
             generateTACStmtList(node->data.block.stmt_list);
             break;
