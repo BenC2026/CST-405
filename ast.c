@@ -195,6 +195,18 @@ ASTNode* createWhile(ASTNode* condition, ASTNode* body) {
     return node;
 }
 
+/* Create a for loop node */
+ASTNode* createFor(ASTNode* init, ASTNode* condition, ASTNode* update, ASTNode* body) {
+    ASTNode* node = (ASTNode*)ast_alloc(sizeof(ASTNode));
+    node->type = NODE_FOR;
+    node->lineno = yylineno;
+    node->data.for_stmt.init = init;
+    node->data.for_stmt.condition = condition;
+    node->data.for_stmt.update = update;
+    node->data.for_stmt.body = body;
+    return node;
+}
+
 /* Create a block statement node */
 ASTNode* createBlock(ASTNode* stmt_list) {
     ASTNode* node = (ASTNode*)ast_alloc(sizeof(ASTNode));
@@ -327,6 +339,21 @@ void printAST(ASTNode* node, int level) {
             for (int i = 0; i < level + 1; i++) printf("  ");
             printf("BODY:\n");
             printAST(node->data.while_stmt.body, level + 2);
+            break;
+        case NODE_FOR:
+            printf("FOR\n");
+            for (int i = 0; i < level + 1; i++) printf("  ");
+            printf("INIT:\n");
+            printAST(node->data.for_stmt.init, level + 2);
+            for (int i = 0; i < level + 1; i++) printf("  ");
+            printf("CONDITION:\n");
+            printAST(node->data.for_stmt.condition, level + 2);
+            for (int i = 0; i < level + 1; i++) printf("  ");
+            printf("UPDATE:\n");
+            printAST(node->data.for_stmt.update, level + 2);
+            for (int i = 0; i < level + 1; i++) printf("  ");
+            printf("BODY:\n");
+            printAST(node->data.for_stmt.body, level + 2);
             break;
         case NODE_BLOCK:
             printf("BLOCK\n");
