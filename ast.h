@@ -24,6 +24,7 @@ typedef enum {
     NODE_RETURN,      /* Return statement */
     NODE_IF,          /* If statement */
     NODE_WHILE,       /* While loop */
+    NODE_FOR,         /* For loop (not implemented yet) */
     NODE_BLOCK,       /* Block statement { ... } */
     NODE_ARRAY_DECL,  /* Array declaration (e.g., int arr[10]) */
     NODE_ARRAY_ASSIGN,/* Array assignment (e.g., arr[0] = 5) */
@@ -123,6 +124,13 @@ typedef struct ASTNode {
             struct ASTNode* body;       /* Loop body */
         } while_stmt;
 
+        struct {
+            struct ASTNode* init;       /* Initialization statement */
+            struct ASTNode* condition;  /* Loop condition */
+            struct ASTNode* update;     /* Update statement */
+            struct ASTNode* body;       /* Loop body */
+        } for_stmt; /* For loop (not implemented yet) */
+
         /* Block statement (NODE_BLOCK) */
         struct {
             struct ASTNode* stmt_list;  /* Statements in block */
@@ -170,6 +178,7 @@ ASTNode* createReturn(ASTNode* expr);                           /* Create return
 /* Control flow nodes */
 ASTNode* createIf(ASTNode* condition, ASTNode* then_stmt, ASTNode* else_stmt);  /* Create if statement */
 ASTNode* createWhile(ASTNode* condition, ASTNode* body);        /* Create while loop */
+ASTNode* createFor(ASTNode* init, ASTNode* condition, ASTNode* update, ASTNode* body); /* Create for loop (not implemented yet) */
 ASTNode* createBlock(ASTNode* stmt_list);                       /* Create block statement */
 
 /* Array-related nodes */
