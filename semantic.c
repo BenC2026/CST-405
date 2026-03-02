@@ -381,6 +381,38 @@ static void checkStmt(ASTNode* node) {
             checkStmt(node->data.while_stmt.body);
             break;
 
+        case NODE_FOR:
+            printf("  ✓ Checking for loop at line %d\n", node->lineno);
+
+            /* Check initialization */
+            if (node->data.for_stmt.init) {
+                checkStmt(node->data.for_stmt.init);
+            }
+
+            /* Check condition */
+            if (node->data.for_stmt.condition) {
+                checkExpr(node->data.for_stmt.condition);
+
+                /* Warn about constant conditions */
+                if (node->data.for_stmt.condition->type == NODE_NUM) {
+                    int value = node->data.for_stmt.condition->data.num;
+                    if (value == 0) {
+                        fprintf(stderr, "Warning: Dead loop (always false)\n");
+                    } else {
+                        fprintf(stderr, "Warning: Infinite loop (always true)\n");
+                    }
+                }
+            }
+
+            /* Check update */
+            if (node->data.for_stmt.update) {
+                checkStmt(node->data.for_stmt.update);
+            }
+
+             /* Check body */
+            checkStmt(node->data.for_stmt.body);
+            break;
+
         case NODE_BLOCK:
             enterScope();
             checkStmtList(node->data.block.stmt_list);
