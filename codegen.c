@@ -545,24 +545,23 @@ void generateMIPSFromTAC(const char* filename) {
                     reg1 = allocReg(tempName);
                     fprintf(output, "    li $t%d, %s         # Load constant %s\n",
                             reg1, curr->arg1, curr->arg1);
-                } else {
-                    // arg1 is a variable or TAC temporary
+                } else if (isTACTemp(curr->arg1)) {
+                    // TAC temporary - must already be in a register
                     reg1 = findVarReg(curr->arg1);
                     if (reg1 == -1) {
-                        // Not in register, need to load
-                        if (isTACTemp(curr->arg1)) {
-                            fprintf(stderr, "Error: TAC temporary %s not in register\n", curr->arg1);
-                            exit(1);
-                        }
-                        int offset = getVarOffset(curr->arg1);
-                        if (offset == -1) {
-                            fprintf(stderr, "Error: Variable %s not declared\n", curr->arg1);
-                            exit(1);
-                        }
-                        reg1 = allocReg(curr->arg1);
-                        fprintf(output, "    lw $t%d, %d($sp)     # Load variable '%s'\n",
-                                reg1, offset, curr->arg1);
+                        fprintf(stderr, "Error: TAC temporary %s not in register\n", curr->arg1);
+                        exit(1);
                     }
+                } else {
+                    // Named variable - always reload from memory for loop correctness
+                    int offset = getVarOffset(curr->arg1);
+                    if (offset == -1) {
+                        fprintf(stderr, "Error: Variable %s not declared\n", curr->arg1);
+                        exit(1);
+                    }
+                    reg1 = allocReg(curr->arg1);
+                    fprintf(output, "    lw $t%d, %d($sp)     # Load variable '%s'\n",
+                            reg1, offset, curr->arg1);
                 }
 
                 // Load arg2 into register
@@ -573,24 +572,23 @@ void generateMIPSFromTAC(const char* filename) {
                     reg2 = allocReg(tempName);
                     fprintf(output, "    li $t%d, %s         # Load constant %s\n",
                             reg2, curr->arg2, curr->arg2);
-                } else {
-                    // arg2 is a variable or TAC temporary
+                } else if (isTACTemp(curr->arg2)) {
+                    // TAC temporary - must already be in a register
                     reg2 = findVarReg(curr->arg2);
                     if (reg2 == -1) {
-                        // Not in register, need to load
-                        if (isTACTemp(curr->arg2)) {
-                            fprintf(stderr, "Error: TAC temporary %s not in register\n", curr->arg2);
-                            exit(1);
-                        }
-                        int offset = getVarOffset(curr->arg2);
-                        if (offset == -1) {
-                            fprintf(stderr, "Error: Variable %s not declared\n", curr->arg2);
-                            exit(1);
-                        }
-                        reg2 = allocReg(curr->arg2);
-                        fprintf(output, "    lw $t%d, %d($sp)     # Load variable '%s'\n",
-                                reg2, offset, curr->arg2);
+                        fprintf(stderr, "Error: TAC temporary %s not in register\n", curr->arg2);
+                        exit(1);
                     }
+                } else {
+                    // Named variable - always reload from memory for loop correctness
+                    int offset = getVarOffset(curr->arg2);
+                    if (offset == -1) {
+                        fprintf(stderr, "Error: Variable %s not declared\n", curr->arg2);
+                        exit(1);
+                    }
+                    reg2 = allocReg(curr->arg2);
+                    fprintf(output, "    lw $t%d, %d($sp)     # Load variable '%s'\n",
+                            reg2, offset, curr->arg2);
                 }
 
                 // Allocate register for result
@@ -965,24 +963,27 @@ void generateMIPSFromTAC(const char* filename) {
                     regIndex = allocReg(tempName);
                     fprintf(output, "    li $t%d, %s         # Load index constant\n",
                             regIndex, curr->arg2);
-                } else {
+                } else if (isTACTemp(curr->arg2)) {
                     regIndex = findVarReg(curr->arg2);
                     if (regIndex == -1) {
-                        if (isTACTemp(curr->arg2)) {
-                            fprintf(stderr, "Error: TAC temporary %s not in register\n", curr->arg2);
-                            exit(1);
-                        }
-                        int off = getVarOffset(curr->arg2);
-                        regIndex = allocReg(curr->arg2);
-                        fprintf(output, "    lw $t%d, %d($sp)     # Load index '%s'\n",
-                                regIndex, off, curr->arg2);
+                        fprintf(stderr, "Error: TAC temporary %s not in register\n", curr->arg2);
+                        exit(1);
                     }
+                } else {
+                    // Named variable - always reload from memory for loop correctness
+                    int off = getVarOffset(curr->arg2);
+                    regIndex = allocReg(curr->arg2);
+                    fprintf(output, "    lw $t%d, %d($sp)     # Load index '%s'\n",
+                            regIndex, off, curr->arg2);
                 }
 
                 // Calculate element address and load value
+                // Use a scratch register for the shifted index so the original variable is preserved
+                int regShifted = allocReg("__idx_shift");
                 int regResult = allocReg(curr->result);
                 fprintf(output, "    # Array access: %s = %s[%s]\n", curr->result, curr->arg1, curr->arg2);
-                fprintf(output, "    sll $t%d, $t%d, 2    # index * 4\n", regIndex, regIndex);
+                fprintf(output, "    move $t%d, $t%d    # copy index to scratch\n", regShifted, regIndex);
+                fprintf(output, "    sll $t%d, $t%d, 2    # index * 4\n", regShifted, regShifted);
                 if (isArrayVar(curr->arg1)) {
                     // Local array - base address is $sp + offset
                     fprintf(output, "    addi $t%d, $sp, %d   # base address of '%s'\n", regResult, baseOffset, curr->arg1);
@@ -990,9 +991,10 @@ void generateMIPSFromTAC(const char* filename) {
                     // Array parameter - load the stored pointer
                     fprintf(output, "    lw $t%d, %d($sp)     # load pointer '%s'\n", regResult, baseOffset, curr->arg1);
                 }
-                fprintf(output, "    add $t%d, $t%d, $t%d # element address\n", regResult, regResult, regIndex);
+                fprintf(output, "    add $t%d, $t%d, $t%d # element address\n", regResult, regResult, regShifted);
                 fprintf(output, "    lw $t%d, 0($t%d)     # load value\n", regResult, regResult);
 
+                freeReg(regShifted);
                 freeReg(regIndex);
                 break;
             }
