@@ -2364,3 +2364,1678 @@ Now t0 = i <= 5 will generate:
 
 sle $t2, $t1, $t3   # t0 = i <= 5
 Which sets the result register to 1 (true) or 0 (false), and beqz can then branch correctly. For your while(i <= 5) loop summing 1+2+3+4+5, the output should be 15.
+
+How do I get it to output 8 instead of 4:
+Let me look at the project files to understand the compiler implementation.
+
+Read C:\Users\15203\.claude\projects\c--Users-15203-Downloads-CST-405-minimal-CST-405-minimal\memory\MEMORY.md
+Bash
+IN
+ls c:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/
+
+OUT
+<tool_use_error>Sibling tool call errored</tool_use_error>
+Bash
+IN
+ls /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/
+
+OUT
+Exit code 2
+ls: cannot access '/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/': No such file or directory
+
+ls: cannot access '/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/': No such file or directory
+Globpattern: "**/*"
+Found 42 files
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\test.cm.tac
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\test.s
+Now I can see the bug. Let me look at the codegen to understand the root cause.
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Read C:\Users\15203\.claude\projects\c--Users-15203-Downloads-CST-405-minimal-CST-405-minimal\a5ff10e2-5379-4c0d-8e9a-0a4717f0f93c\tool-results\toolu_01PnwqbL2e4oKSN4yppGwcLb.txt
+Grep "TAC_ASSIGN|TAC_ASSIGN_CONST|case TAC_|assign.*const|constant.*fold" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+184 lines of output
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.h
+Let me look at the tac.c optimizer to find where constant folding happens:
+
+Grep "constant.fold|constantFold|foldConst|x\s*=\s*3|ASSIGN.*const|isdigit|atoi.*arg|isConstant|isNumeric" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c)
+82 lines of output
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\test.tac
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\test.optimized.tac
+The bug is clear now. Let me look at the optimizer in tac.c to fix it:
+
+Grep "Pattern 1|NOP|current->op = TAC_NOP" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c)
+73 lines of output
+Now I understand the bug completely. Let me read the relevant section of tac.c to make the fix:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c (lines 606-665)
+Found the bug. The constant folding (Pattern 1) at tac.c:634-636 marks x = 3 and y = 1 as NOP without checking if those variables are still needed later. In your program, x and y are passed as arguments to array(), so they get eliminated but still referenced → uninitialized memory is read → output is 4 instead of 8.
+
+The fix is to only eliminate the assignments if the variables aren't used after the fold point:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c (lines 549-568)
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c
+Added 10 lines
+Now update the constant folding to only eliminate x = 3 / y = 1 if they're not used afterward:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c
+Added 2 lines
+Now rebuild and rerun:
+
+Bash
+IN
+cd "c:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal" && make 2>&1
+
+OUT
+Exit code 127
+/usr/bin/bash: line 1: make: command not found
+
+/usr/bin/bash: line 1: make: command not found
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\Makefile
+Bash
+IN
+cd "c:/Users/15203/Downloads/CST-405-minimal/CST-405-minimal" && gcc -g -Wall -c tac.c -o tac.o 2>&1 && gcc -g -Wall -o minicompiler lex.yy.o parser.tab.o main.o ast.o symtab.o codegen.o tac.o semantic.o 2>&1 && echo "Build OK"
+
+OUT
+Exit code 1
+tac.c: In function 'optimizeTAC':
+tac.c:669:5: warning: implicit declaration of function 'removeNOPs'; did you mean 'remove'? [-Wimplicit-function-declaration]
+  669 |     removeNOPs();
+      |     ^~~~~~~~~~
+      |     remove
+tac.c: At top level:
+tac.c:964:6: warning: conflicting types for 'removeNOPs'; have 'void()'
+  964 | void removeNOPs() {
+      |      ^~~~~~~~~~
+tac.c:669:5: note: previous implicit declaration of 'removeNOPs' with type 'void()'
+  669 |     removeNOPs();
+      |     ^~~~~~~~~~
+tac.c: In function 'removeNOPs':
+tac.c:970:23: warning: unused variable 'toDelete' [-Wunused-variable]
+  970 |             TACInstr* toDelete = current;
+      |                       ^~~~~~~~
+tac.c: At top level:
+tac.c:579:14: warning: 'foldConstants' defined but not used [-Wunused-function]
+  579 | static char* foldConstants(TACOp op, const char* arg1, const char* arg2, int* folded) {
+      |              ^~~~~~~~~~~~~
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: lex.yy.o: in function `yylex':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:759: undefined reference to `stdin'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:762: undefined reference to `stdout'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: lex.yy.o: in function `yy_get_next_buffer':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:1257: undefined reference to `__errno_location'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:1257: undefined reference to `__errno_location'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:1257: undefined reference to `__errno_location'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: lex.yy.o: in function `yy_init_buffer':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:1559: undefined reference to `__errno_location'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:1577: undefined reference to `__errno_location'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: lex.yy.o: in function `yy_fatal_error':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:1797: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: parser.tab.o: in function `yyerror':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/parser.y:349: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: main.o: in function `get_memory_usage':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/benchmark.c:39: undefined reference to `__isoc99_sscanf'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: main.o: in function `main':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/main.c:73: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: codegen.o: in function `genExpr':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:200: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:238: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: codegen.o: in function `genStmt':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:270: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:280: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: codegen.o:/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:328: more undefined references to `stderr' follow
+collect2.exe: error: ld returned 1 exit status
+
+tac.c: In function 'optimizeTAC':
+tac.c:669:5: warning: implicit declaration of function 'removeNOPs'; did you mean 'remove'? [-Wimplicit-function-declaration]
+  669 |     removeNOPs();
+      |     ^~~~~~~~~~
+      |     remove
+tac.c: At top level:
+tac.c:964:6: warning: conflicting types for 'removeNOPs'; have 'void()'
+  964 | void removeNOPs() {
+      |      ^~~~~~~~~~
+tac.c:669:5: note: previous implicit declaration of 'removeNOPs' with type 'void()'
+  669 |     removeNOPs();
+      |     ^~~~~~~~~~
+tac.c: In function 'removeNOPs':
+tac.c:970:23: warning: unused variable 'toDelete' [-Wunused-variable]
+  970 |             TACInstr* toDelete = current;
+      |                       ^~~~~~~~
+tac.c: At top level:
+tac.c:579:14: warning: 'foldConstants' defined but not used [-Wunused-function]
+  579 | static char* foldConstants(TACOp op, const char* arg1, const char* arg2, int* folded) {
+      |              ^~~~~~~~~~~~~
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: lex.yy.o: in function `yylex':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:759: undefined reference to `stdin'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:762: undefined reference to `stdout'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: lex.yy.o: in function `yy_get_next_buffer':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:1257: undefined reference to `__errno_location'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:1257: undefined reference to `__errno_location'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:1257: undefined reference to `__errno_location'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: lex.yy.o: in function `yy_init_buffer':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:1559: undefined reference to `__errno_location'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:1577: undefined reference to `__errno_location'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: lex.yy.o: in function `yy_fatal_error':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/lex.yy.c:1797: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: parser.tab.o: in function `yyerror':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/parser.y:349: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: main.o: in function `get_memory_usage':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/benchmark.c:39: undefined reference to `__isoc99_sscanf'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: main.o: in function `main':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/main.c:73: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: codegen.o: in function `genExpr':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:200: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:238: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: codegen.o: in function `genStmt':
+/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:270: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:280: undefined reference to `stderr'
+C:/ProgramData/mingw64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/13.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: codegen.o:/mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal/codegen.c:328: more undefined references to `stderr' follow
+collect2.exe: error: ld returned 1 exit status
+The project builds in WSL. Let me try that:
+
+Bash
+IN
+wsl -e bash -c "cd /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal && gcc -g -Wall -c tac.c -o tac.o 2>&1 && gcc -g -Wall -o minicompiler lex.yy.o parser.tab.o main.o ast.o symtab.o codegen.o tac.o semantic.o 2>&1 && echo 'Build OK'"
+
+OUT
+tac.c: In function ‘optimizeTAC’:
+tac.c:669:5: warning: implicit declaration of function ‘removeNOPs’; did you mean ‘remove’? [-Wimplicit-function-declaration]
+  669 |     removeNOPs();
+      |     ^~~~~~~~~~
+      |     remove
+tac.c: At top level:
+tac.c:964:6: warning: conflicting types for ‘removeNOPs’; have ‘void()’
+  964 | void removeNOPs() {
+      |      ^~~~~~~~~~
+tac.c:669:5: note: previous implicit declaration of ‘removeNOPs’ with type ‘void()’
+  669 |     removeNOPs();
+      |     ^~~~~~~~~~
+tac.c: In function ‘removeNOPs’:
+tac.c:970:23: warning: unused variable ‘toDelete’ [-Wunused-variable]
+  970 |             TACInstr* toDelete = current;
+      |                       ^~~~~~~~
+tac.c: At top level:
+tac.c:579:14: warning: ‘foldConstants’ defined but not used [-Wunused-function]
+  579 | static char* foldConstants(TACOp op, const char* arg1, const char* arg2, int* folded) {
+      |              ^~~~~~~~~~~~~
+Build OK
+Build succeeded. Now run the compiler on test.cm and check the optimized TAC:
+
+Bash
+IN
+wsl -e bash -c "cd /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal && ./minicompiler test.cm test.s 2>&1 && echo '--- Optimized TAC ---' && cat test.optimized.tac"
+
+OUT
+╔════════════════════════════════════════════════════════════╗
+║          MINIMAL C COMPILER - EDUCATIONAL VERSION          ║
+╚════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────┐
+│ PHASE 1: LEXICAL & SYNTAX ANALYSIS                       │
+├──────────────────────────────────────────────────────────┤
+│ • Reading source file: test.cm
+│ • Tokenizing input (scanner.l)
+│ • Parsing grammar rules (parser.y)
+│ • Building Abstract Syntax Tree
+└──────────────────────────────────────────────────────────┘
+SYMBOL TABLE: Variable 'x' not found
+SYMBOL TABLE: Added variable 'x' at offset 0
+
+=== SYMBOL TABLE STATE ===
+Count: 1, Next Offset: 4
+Variables:
+  [0] x (int) -> offset 0
+==========================
+
+SYMBOL TABLE: Variable 'y' not found
+SYMBOL TABLE: Added variable 'y' at offset 4
+
+=== SYMBOL TABLE STATE ===
+Count: 2, Next Offset: 8
+Variables:
+  [0] x (int) -> offset 0
+  [1] y (int) -> offset 4
+==========================
+
+SYMBOL TABLE: Variable 'z' not found
+SYMBOL TABLE: Added variable 'z' at offset 8
+
+=== SYMBOL TABLE STATE ===
+Count: 3, Next Offset: 12
+Variables:
+  [0] x (int) -> offset 0
+  [1] y (int) -> offset 4
+  [2] z (int) -> offset 8
+==========================
+
+SYMBOL TABLE: Variable 'list' not found
+SYMBOL TABLE: Added array 'list' of size 3 at offset 12
+
+=== SYMBOL TABLE STATE ===
+Count: 4, Next Offset: 24
+Variables:
+  [0] x (int) -> offset 0
+  [1] y (int) -> offset 4
+  [2] z (int) -> offset 8
+  [3] list[3] (int) -> offset 12
+==========================
+
+✓ Parse successful - program is syntactically correct!
+
+┌──────────────────────────────────────────────────────────┐
+│ PHASE 2: ABSTRACT SYNTAX TREE (AST)                      │
+├──────────────────────────────────────────────────────────┤
+│ Tree structure representing the program hierarchy:       │
+└──────────────────────────────────────────────────────────┘
+FUNC_DEF: main
+  BODY:
+    BLOCK
+                                          DECL: x (int)
+      DECL: y (int)
+      DECL: z (int)
+      ASSIGN: x
+        NUM: 3
+      ASSIGN: y
+        NUM: 1
+      ASSIGN: z
+        BINOP: +
+          VAR: x
+          VAR: y
+      PRINT
+        FUNC_CALL: sumOf
+          ARGS:
+            FUNC_CALL: array
+              ARGS:
+                                                VAR: x
+                VAR: y
+                VAR: z
+FUNC_DEF: array
+  PARAMS:
+            PARAM: x
+    PARAM: y
+    PARAM: z
+  BODY:
+    BLOCK
+                                    ARRAY_DECL: list[3]
+            ARRAY_ASSIGN: list[] =
+      Index:
+        NUM: 0
+      Value:
+        VAR: x
+            ARRAY_ASSIGN: list[] =
+      Index:
+        NUM: 1
+      Value:
+        VAR: y
+            ARRAY_ASSIGN: list[] =
+      Index:
+        NUM: 2
+      Value:
+        VAR: z
+      RETURN
+        VAR: list
+FUNC_DEF: sumOf
+  PARAMS:
+    PARAM: l
+  BODY:
+    BLOCK
+      RETURN
+        BINOP: +
+          BINOP: +
+                        ARRAY_ACCESS: l[]
+            Index:
+              NUM: 0
+                        ARRAY_ACCESS: l[]
+            Index:
+              NUM: 1
+                    ARRAY_ACCESS: l[]
+          Index:
+            NUM: 2
+
+┌──────────────────────────────────────────────────────────┐
+│ PHASE 3: SEMANTIC ANALYSIS                               │
+├──────────────────────────────────────────────────────────┤
+│ Checking program semantics:                              │
+│ • Variable declarations and usage                        │
+│ • Type compatibility                                     │
+│ • Duplicate declarations                                 │
+└──────────────────────────────────────────────────────────┘
+SEMANTIC ANALYZER: Initialized with function support
+
+Running semantic analysis with function support...
+
+Entered global scope
+
+┌─────────────────────────────────────────────────────────┐
+│ SEMANTIC SCOPE STACK (Depth: 1)                        
+├─────────────────────────────────────────────────────────┤
+│ Scope[0] GLOBAL (0 variables)                        
+│   (empty)
+└─────────────────────────────────────────────────────────┘
+
+Pass 1: Registering all functions
+───────────────────────────────
+  ✓ Function 'main' defined with 0 parameter(s)
+  ✓ Function 'array' defined with 3 parameter(s)
+  ✓ Function 'sumOf' defined with 1 parameter(s)
+
+Pass 2: Checking function bodies
+─────────────────────────────────
+─── Checking function: main ───
+  Entered function 'main' scope
+
+┌─────────────────────────────────────────────────────────┐
+│ SEMANTIC SCOPE STACK (Depth: 2)                        
+├─────────────────────────────────────────────────────────┤
+│ Scope[0] GLOBAL (0 variables)                        
+│   (empty)
+│ Scope[1] Function 'main' (0 variables)              
+│   (empty)
+└─────────────────────────────────────────────────────────┘
+
+  ✓ Variable 'x' declared (line 2)
+  ✓ Variable 'y' declared (line 3)
+  ✓ Variable 'z' declared (line 4)
+  ✓ Assignment to 'x' is valid (line 5)
+  ✓ Assignment to 'y' is valid (line 6)
+  ✓ Assignment to 'z' is valid (line 7)
+  ✓ Function call 'sumOf' has correct argument count
+  ✓ Function call 'array' has correct argument count
+  ✓ Print statement is valid
+  Exiting function 'main' scope
+
+┌─────────────────────────────────────────────────────────┐
+│ SEMANTIC SCOPE STACK (Depth: 1)                        
+├─────────────────────────────────────────────────────────┤
+│ Scope[0] GLOBAL (0 variables)                        
+│   (empty)
+└─────────────────────────────────────────────────────────┘
+
+
+─── Checking function: array ───
+  Entered function 'array' scope
+
+┌─────────────────────────────────────────────────────────┐
+│ SEMANTIC SCOPE STACK (Depth: 2)                        
+├─────────────────────────────────────────────────────────┤
+│ Scope[0] GLOBAL (0 variables)                        
+│   (empty)
+│ Scope[1] Function 'array' (0 variables)              
+│   (empty)
+└─────────────────────────────────────────────────────────┘
+
+  ✓ Parameter 'x' added to function scope
+  ✓ Parameter 'y' added to function scope
+  ✓ Parameter 'z' added to function scope
+
+┌─────────────────────────────────────────────────────────┐
+│ SEMANTIC SCOPE STACK (Depth: 2)                        
+├─────────────────────────────────────────────────────────┤
+│ Scope[0] GLOBAL (0 variables)                        
+│   (empty)
+│ Scope[1] Function 'array' (3 variables)              
+│   Variables: x, y, z
+└─────────────────────────────────────────────────────────┘
+
+  ✓ Array 'list[3]' declared (line 12)
+  ✓ Return statement in function 'array'
+  Exiting function 'array' scope
+
+┌─────────────────────────────────────────────────────────┐
+│ SEMANTIC SCOPE STACK (Depth: 1)                        
+├─────────────────────────────────────────────────────────┤
+│ Scope[0] GLOBAL (0 variables)                        
+│   (empty)
+└─────────────────────────────────────────────────────────┘
+
+
+─── Checking function: sumOf ───
+  Entered function 'sumOf' scope
+
+┌─────────────────────────────────────────────────────────┐
+│ SEMANTIC SCOPE STACK (Depth: 2)                        
+├─────────────────────────────────────────────────────────┤
+│ Scope[0] GLOBAL (0 variables)                        
+│   (empty)
+│ Scope[1] Function 'sumOf' (0 variables)              
+│   (empty)
+└─────────────────────────────────────────────────────────┘
+
+  ✓ Parameter 'l' added to function scope
+
+┌─────────────────────────────────────────────────────────┐
+│ SEMANTIC SCOPE STACK (Depth: 2)                        
+├─────────────────────────────────────────────────────────┤
+│ Scope[0] GLOBAL (0 variables)                        
+│   (empty)
+│ Scope[1] Function 'sumOf' (1 variables)              
+│   Variables: l
+└─────────────────────────────────────────────────────────┘
+
+  ✓ Return statement in function 'sumOf'
+  Exiting function 'sumOf' scope
+
+┌─────────────────────────────────────────────────────────┐
+│ SEMANTIC SCOPE STACK (Depth: 1)                        
+├─────────────────────────────────────────────────────────┤
+│ Scope[0] GLOBAL (0 variables)                        
+│   (empty)
+└─────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════
+SEMANTIC ANALYSIS SUMMARY
+═══════════════════════════════════════════
+Functions defined:  4
+Errors found:       0
+Warnings found:     0
+
+✓ Semantic analysis passed - program is semantically correct!
+═══════════════════════════════════════════
+
+┌──────────────────────────────────────────────────────────┐
+│ PHASE 4: INTERMEDIATE CODE GENERATION                    │
+├──────────────────────────────────────────────────────────┤
+│ Three-Address Code (TAC) - simplified instructions:      │
+│ • Each instruction has at most 3 operands                │
+│ • Temporary variables (t0, t1, ...) for expressions      │
+└──────────────────────────────────────────────────────────┘
+TAC: Temporary allocator initialized
+    [TAC ALLOC] Allocating new temporary t0
+    [TAC FREE] Released temporary t0
+    [TAC ALLOC] Reusing temporary t0
+    [TAC ALLOC] Allocating new temporary t1
+    [TAC FREE] Released temporary t1
+    [TAC ALLOC] Reusing temporary t1
+    [TAC ALLOC] Allocating new temporary t2
+    [TAC ALLOC] Allocating new temporary t3
+    [TAC FREE] Released temporary t1
+    [TAC FREE] Released temporary t2
+    [TAC ALLOC] Reusing temporary t2
+    [TAC ALLOC] Reusing temporary t1
+    [TAC FREE] Released temporary t3
+    [TAC FREE] Released temporary t2
+    [TAC FREE] Released temporary t1
+Unoptimized TAC Instructions:
+─────────────────────────────
+  1: FUNC_BEGIN main
+  2: DECL x
+  3: DECL y
+  4: DECL z
+  5: x = 3
+  6: y = 1
+  7: t0 = x + y
+  8: z = t0
+  9: ARG x
+ 10: ARG y
+ 11: ARG z
+ 12: t0 = CALL array, 3
+ 13: ARG t0
+ 14: t1 = CALL sumOf, 1
+ 15: PRINT t1
+ 16: FUNC_END main
+ 17: FUNC_BEGIN array
+ 18: PARAM x
+ 19: PARAM y
+ 20: PARAM z
+ 21: ARRAY_DECL list[3]
+ 22: ARRAY_ASSIGN list[0] = x
+ 23: ARRAY_ASSIGN list[1] = y
+ 24: ARRAY_ASSIGN list[2] = z
+ 25: RETURN list
+ 26: FUNC_END array
+ 27: FUNC_BEGIN sumOf
+ 28: PARAM l
+ 29: t1 = l[0]
+ 30: t2 = l[1]
+ 31: t3 = t1 + t2
+ 32: t2 = l[2]
+ 33: t1 = t3 + t2
+ 34: RETURN t1
+ 35: FUNC_END sumOf
+
+┌──────────────────────────────────────────────────────────┐
+│ TEMPORARY ALLOCATOR STATISTICS                           │
+├──────────────────────────────────────────────────────────┤
+│ Total temporaries used:        4                         │
+│ Currently allocated:           1                         │
+│ Available for reuse:           3                         │
+└──────────────────────────────────────────────────────────┘
+
+✓ Unoptimized TAC saved to: test.tac
+┌──────────────────────────────────────────────────────────┐
+│ PHASE 5: CODE OPTIMIZATION                               │
+├──────────────────────────────────────────────────────────┤
+│ Applying optimizations:                                  │
+│ • Constant folding (evaluate compile-time expressions)   │
+│ • Copy propagation (replace variables with values)       │
+└──────────────────────────────────────────────────────────┘
+Optimized TAC Instructions:
+─────────────────────────────
+  1: FUNC_BEGIN main
+  2: DECL x
+  3: DECL y
+  4: DECL z
+  5: x = 3
+  6: y = 1
+  7: z = 4
+  8: ARG x
+  9: ARG y
+ 10: ARG z
+ 11: t0 = CALL array, 3
+ 12: ARG t0
+ 13: t1 = CALL sumOf, 1
+ 14: PRINT t1
+ 15: FUNC_END main
+ 16: FUNC_BEGIN array
+ 17: PARAM x
+ 18: PARAM y
+ 19: PARAM z
+ 20: ARRAY_DECL list[3]
+ 21: ARRAY_ASSIGN list[0] = x
+ 22: ARRAY_ASSIGN list[1] = y
+ 23: ARRAY_ASSIGN list[2] = z
+ 24: RETURN list
+ 25: FUNC_END array
+ 26: FUNC_BEGIN sumOf
+ 27: PARAM l
+ 28: t1 = l[0]
+ 29: t2 = l[1]
+ 30: t3 = t1 + t2
+ 31: t2 = l[2]
+ 32: t1 = t3 + t2
+ 33: RETURN t1
+ 34: FUNC_END sumOf
+
+✓ Optimized TAC saved to: test.optimized.tac
+┌──────────────────────────────────────────────────────────┐
+│ PHASE 6: MIPS CODE GENERATION                            │
+├──────────────────────────────────────────────────────────┤
+│ Translating OPTIMIZED TAC to MIPS assembly:              │
+│ • Using optimized TAC (with constant folding)            │
+│ • Variables stored on stack                              │
+│ • Register allocation with LRU spilling                  │
+│ • System calls for print operations                      │
+└──────────────────────────────────────────────────────────┘
+SYMBOL TABLE: Initialized
+
+=== SYMBOL TABLE STATE ===
+Count: 0, Next Offset: 0
+(empty)
+==========================
+
+MIPS: Register allocator initialized (10 temp registers: $t0-$t9)
+
+SYMBOL TABLE: Initialized
+
+=== SYMBOL TABLE STATE ===
+Count: 0, Next Offset: 0
+(empty)
+==========================
+
+MIPS: Register allocator initialized (10 temp registers: $t0-$t9)
+
+SYMBOL TABLE: Variable 'x' not found
+SYMBOL TABLE: Added variable 'x' at offset 0
+
+=== SYMBOL TABLE STATE ===
+Count: 1, Next Offset: 4
+Variables:
+  [0] x (int) -> offset 0
+==========================
+
+SYMBOL TABLE: Variable 'y' not found
+SYMBOL TABLE: Added variable 'y' at offset 4
+
+=== SYMBOL TABLE STATE ===
+Count: 2, Next Offset: 8
+Variables:
+  [0] x (int) -> offset 0
+  [1] y (int) -> offset 4
+==========================
+
+SYMBOL TABLE: Variable 'z' not found
+SYMBOL TABLE: Added variable 'z' at offset 8
+
+=== SYMBOL TABLE STATE ===
+Count: 3, Next Offset: 12
+Variables:
+  [0] x (int) -> offset 0
+  [1] y (int) -> offset 4
+  [2] z (int) -> offset 8
+==========================
+
+SYMBOL TABLE: Found variable 'x' at offset 0
+    [REG ALLOC] Allocated $t0 for 'x'
+SYMBOL TABLE: Found variable 'y' at offset 4
+    [REG ALLOC] Allocated $t1 for 'y'
+SYMBOL TABLE: Found variable 'z' at offset 8
+    [REG ALLOC] Allocated $t2 for 'z'
+SYMBOL TABLE: Found variable 'x' at offset 0
+SYMBOL TABLE: Found variable 'y' at offset 4
+SYMBOL TABLE: Found variable 'z' at offset 8
+    [REG ALLOC] Allocated $t3 for 't0'
+SYMBOL TABLE: Variable 't0' not found
+    [REG ALLOC] Allocated $t4 for 't1'
+    [REG ALLOC] Freed $t4
+SYMBOL TABLE: Initialized
+
+=== SYMBOL TABLE STATE ===
+Count: 0, Next Offset: 0
+(empty)
+==========================
+
+MIPS: Register allocator initialized (10 temp registers: $t0-$t9)
+
+SYMBOL TABLE: Variable 'x' not found
+SYMBOL TABLE: Added variable 'x' at offset 0
+
+=== SYMBOL TABLE STATE ===
+Count: 1, Next Offset: 4
+Variables:
+  [0] x (int) -> offset 0
+==========================
+
+    [REG ALLOC] Allocated $t0 for 'x'
+SYMBOL TABLE: Variable 'y' not found
+SYMBOL TABLE: Added variable 'y' at offset 4
+
+=== SYMBOL TABLE STATE ===
+Count: 2, Next Offset: 8
+Variables:
+  [0] x (int) -> offset 0
+  [1] y (int) -> offset 4
+==========================
+
+    [REG ALLOC] Allocated $t1 for 'y'
+SYMBOL TABLE: Variable 'z' not found
+SYMBOL TABLE: Added variable 'z' at offset 8
+
+=== SYMBOL TABLE STATE ===
+Count: 3, Next Offset: 12
+Variables:
+  [0] x (int) -> offset 0
+  [1] y (int) -> offset 4
+  [2] z (int) -> offset 8
+==========================
+
+    [REG ALLOC] Allocated $t2 for 'z'
+SYMBOL TABLE: Variable 'list' not found
+SYMBOL TABLE: Added array 'list' of size 3 at offset 12
+
+=== SYMBOL TABLE STATE ===
+Count: 4, Next Offset: 24
+Variables:
+  [0] x (int) -> offset 0
+  [1] y (int) -> offset 4
+  [2] z (int) -> offset 8
+  [3] list[3] (int) -> offset 12
+==========================
+
+SYMBOL TABLE: Found variable 'list' at offset 12
+    [REG ALLOC] Allocated $t3 for 'idx_const_0'
+    [REG ALLOC] Allocated $t4 for '__arr_addr'
+    [REG ALLOC] Freed $t3
+    [REG ALLOC] Freed $t4
+SYMBOL TABLE: Found variable 'list' at offset 12
+    [REG ALLOC] Allocated $t3 for 'idx_const_1'
+    [REG ALLOC] Allocated $t4 for '__arr_addr'
+    [REG ALLOC] Freed $t3
+    [REG ALLOC] Freed $t4
+SYMBOL TABLE: Found variable 'list' at offset 12
+    [REG ALLOC] Allocated $t3 for 'idx_const_2'
+    [REG ALLOC] Allocated $t4 for '__arr_addr'
+    [REG ALLOC] Freed $t3
+    [REG ALLOC] Freed $t4
+SYMBOL TABLE: Found variable 'list' at offset 12
+    [REG ALLOC] Allocated $t3 for 'list'
+    [REG ALLOC] Freed $t3
+SYMBOL TABLE: Initialized
+
+=== SYMBOL TABLE STATE ===
+Count: 0, Next Offset: 0
+(empty)
+==========================
+
+MIPS: Register allocator initialized (10 temp registers: $t0-$t9)
+
+SYMBOL TABLE: Variable 'l' not found
+SYMBOL TABLE: Added variable 'l' at offset 0
+
+=== SYMBOL TABLE STATE ===
+Count: 1, Next Offset: 4
+Variables:
+  [0] l (int) -> offset 0
+==========================
+
+    [REG ALLOC] Allocated $t0 for 'l'
+SYMBOL TABLE: Found variable 'l' at offset 0
+    [REG ALLOC] Allocated $t1 for 'idx_const_0'
+    [REG ALLOC] Allocated $t2 for 't1'
+    [REG ALLOC] Freed $t1
+SYMBOL TABLE: Found variable 'l' at offset 0
+    [REG ALLOC] Allocated $t1 for 'idx_const_1'
+    [REG ALLOC] Allocated $t3 for 't2'
+    [REG ALLOC] Freed $t1
+    [REG ALLOC] Allocated $t1 for 't3'
+SYMBOL TABLE: Found variable 'l' at offset 0
+    [REG ALLOC] Allocated $t4 for 'idx_const_2'
+    [REG ALLOC] Variable 't2' already in $t3
+    [REG ALLOC] Freed $t4
+    [REG ALLOC] Variable 't1' already in $t2
+    [REG ALLOC] Freed $t2
+
+┌──────────────────────────────────────────────────────────┐
+│ REGISTER ALLOCATION STATISTICS                           │
+├──────────────────────────────────────────────────────────┤
+│ Total registers spilled:       0                         │
+│ Final register usage:                                    │
+│   $t0 : l                                         │
+│   $t1 : t3                                        │
+│   $t3 : t2                                        │
+└──────────────────────────────────────────────────────────┘
+
+✓ MIPS assembly code generated to: test.s
+
+╔════════════════════════════════════════════════════════════╗
+║                  COMPILATION SUCCESSFUL!                   ║
+║         Run the output file in a MIPS simulator            ║
+╚════════════════════════════════════════════════════════════╝
+--- Optimized TAC ---
+Optimized Three-Address Code (TAC)
+===================================
+With function support and control flow
+
+  1: FUNC_BEGIN main
+  2: DECL x
+  3: DECL y
+  4: DECL z
+  5: x = 3
+  6: y = 1
+  7: z = 4
+  8: ARG x
+  9: ARG y
+ 10: ARG z
+ 11: t0 = CALL array, 3
+ 12: ARG t0
+ 13: t1 = CALL sumOf, 1
+ 14: PRINT t1
+ 15: FUNC_END main
+ 16: FUNC_BEGIN array
+ 17: PARAM x
+ 18: PARAM y
+ 19: PARAM z
+ 20: ARRAY_DECL list[3]
+ 21: ARRAY_ASSIGN list[0] = x
+ 22: ARRAY_ASSIGN list[1] = y
+ 23: ARRAY_ASSIGN list[2] = z
+ 24: RETURN list
+ 25: FUNC_END array
+ 26: FUNC_BEGIN sumOf
+ 27: PARAM l
+ 28: t1 = l[0]
+ 29: t2 = l[1]
+ 30: t3 = t1 + t2
+ 31: t2 = l[2]
+ 32: t1 = t3 + t2
+ 33: RETURN t1
+ 34: FUNC_END sumOf
+The optimized TAC now correctly keeps x = 3 and y = 1. Let me verify the generated assembly:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\test.s
+The fix works. The generated assembly now correctly stores x=3, y=1, and z=4 before the function call. Now when you run it in SPIM it will output 8 (3+1+4).
+
+Root cause: The constant folding optimizer in tac.c:634-636 was pattern-matching:
+
+
+x = 3
+y = 1
+t0 = x + y
+and collapsing it to z = 4, then marking x = 3 and y = 1 as dead — without checking that x and y were still used later as arguments to array().
+
+Fix: Added isUsedAfter() to check if the variable is referenced after the fold point before eliminating it. Now the optimized TAC correctly preserves x = 3 and y = 1 while still constant-folding z = 4.
+
+How do I fix this error:
+The generated assembly has a register clobbering bug in the loop. Let me look at the codegen for array access:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 953-1012)
+Let me also check TAC_ARRAY_ASSIGN for comparison:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 882-951)
+The bug is clear. At codegen.c:985, the sll (shift left) is done in-place on regIndex — which is the same register holding i. This destroys i's value mid-loop. On the next iteration, the comparison slt $t7, $t0, $t6 uses the stale value (2, from the multiply constant) instead of i.
+
+The fix: copy i into a scratch register before shifting, so the original is preserved.
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Added 4 lines
+Now rebuild and recompile the test:
+
+Bash
+IN
+wsl -e bash -c "cd /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal && gcc -g -Wall -c codegen.c -o codegen.o 2>&1 && gcc -g -Wall -o minicompiler lex.yy.o parser.tab.o main.o ast.o symtab.o codegen.o tac.o semantic.o 2>&1 && echo 'Build OK'"
+
+OUT
+codegen.c: In function ‘genExpr’:
+codegen.c:261:1: warning: control reaches end of non-void function [-Wreturn-type]
+  261 | }
+      | ^
+Build OK
+Now regenerate the MIPS assembly from the TAC and check the loop section:
+
+Bash
+IN
+wsl -e bash -c "cd /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal && ./minicompiler test.cm test.s 2>/dev/null && grep -A 30 'L0:' test.s"
+
+OUT
+╔════════════════════════════════════════════════════════════╗
+║          MINIMAL C COMPILER - EDUCATIONAL VERSION          ║
+╚════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────┐
+│ PHASE 1: LEXICAL & SYNTAX ANALYSIS                       │
+├──────────────────────────────────────────────────────────┤
+│ • Reading source file: test.cm
+│ • Tokenizing input (scanner.l)
+│ • Parsing grammar rules (parser.y)
+│ • Building Abstract Syntax Tree
+└──────────────────────────────────────────────────────────┘
+SYMBOL TABLE: Variable 'list' not found
+SYMBOL TABLE: Added array 'list' of size 5 at offset 0
+
+=== SYMBOL TABLE STATE ===
+Count: 1, Next Offset: 20
+Variables:
+  [0] list[5] (int) -> offset 0
+==========================
+
+SYMBOL TABLE: Variable 'i' not found
+SYMBOL TABLE: Added variable 'i' at offset 20
+
+=== SYMBOL TABLE STATE ===
+Count: 2, Next Offset: 24
+Variables:
+  [0] list[5] (int) -> offset 0
+  [1] i (int) -> offset 20
+==========================
+
+✓ Parse successful - program is syntactically correct!
+
+┌──────────────────────────────────────────────────────────┐
+│ PHASE 2: ABSTRACT SYNTAX TREE (AST)                      │
+├──────────────────────────────────────────────────────────┤
+│ Tree structure representing the program hierarchy:       │
+└──────────────────────────────────────────────────────────┘
+FUNC_DEF: main
+  BODY:
+    BLOCK
+                                                      ARRAY_DECL: list[5]
+            ARRAY_ASSIGN: list[] =
+      Index:
+        NUM: 0
+      Value:
+        NUM: 1
+            ARRAY_ASSIGN: list[] =
+      Index:
+        NUM: 1
+      Value:
+        NUM: 2
+            ARRAY_ASSIGN: list[] =
+      Index:
+        NUM: 2
+      Value:
+        NUM: 3
+            ARRAY_ASSIGN: list[] =
+      Index:
+        NUM: 3
+      Value:
+        NUM: 4
+            ARRAY_ASSIGN: list[] =
+      Index:
+        NUM: 4
+      Value:
+        NUM: 5
+      DECL: i (int)
+      FOR
+        INIT:
+          ASSIGN: i
+            NUM: 0
+        CONDITION:
+          BINOP: <
+            VAR: i
+            NUM: 5
+        UPDATE:
+          ASSIGN: i
+            BINOP: +
+              VAR: i
+              NUM: 1
+        BODY:
+          BLOCK
+            PRINT
+              BINOP: *
+                                ARRAY_ACCESS: list[]
+                Index:
+                  VAR: i
+                NUM: 2
+
+┌──────────────────────────────────────────────────────────┐
+│ PHASE 3: SEMANTIC ANALYSIS                               │
+├──────────────────────────────────────────────────────────┤
+│ Checking program semantics:                              │
+│ • Variable declarations and usage                        │
+│ • Type compatibility                                     │
+│ • Duplicate declarations                                 │
+└──────────────────────────────────────────────────────────┘
+SEMANTIC ANALYZER: Initialized with function support
+
+Running semantic analysis with function support...
+
+Entered global scope
+
+┌─────────────────────────────────────────────────────────┐
+│ SEMANTIC SCOPE STACK (Depth: 1)                        
+├─────────────────────────────────────────────────────────┤
+│ Scope[0] GLOBAL (0 variables)                        
+│   (empty)
+└─────────────────────────────────────────────────────────┘
+
+Pass 1: Registering all functions
+───────────────────────────────
+  ✓ Function 'main' defined with 0 parameter(s)
+
+Pass 2: Checking function bodies
+─────────────────────────────────
+─── Checking function: main ───
+  Entered function 'main' scope
+
+┌─────────────────────────────────────────────────────────┐
+│ SEMANTIC SCOPE STACK (Depth: 2)                        
+├─────────────────────────────────────────────────────────┤
+│ Scope[0] GLOBAL (0 variables)                        
+│   (empty)
+│ Scope[1] Function 'main' (0 variables)              
+│   (empty)
+└─────────────────────────────────────────────────────────┘
+
+  ✓ Array 'list[5]' declared (line 2)
+  ✓ Variable 'i' declared (line 8)
+  ✓ Checking for loop at line 11
+  ✓ Assignment to 'i' is valid (line 9)
+  ✓ Assignment to 'i' is valid (line 9)
+  ✓ Print statement is valid
+  Exiting function 'main' scope
+
+┌─────────────────────────────────────────────────────────┐
+│ SEMANTIC SCOPE STACK (Depth: 1)                        
+├─────────────────────────────────────────────────────────┤
+│ Scope[0] GLOBAL (0 variables)                        
+│   (empty)
+└─────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════
+SEMANTIC ANALYSIS SUMMARY
+═══════════════════════════════════════════
+Functions defined:  2
+Errors found:       0
+Warnings found:     0
+
+✓ Semantic analysis passed - program is semantically correct!
+═══════════════════════════════════════════
+
+┌──────────────────────────────────────────────────────────┐
+│ PHASE 4: INTERMEDIATE CODE GENERATION                    │
+├──────────────────────────────────────────────────────────┤
+│ Three-Address Code (TAC) - simplified instructions:      │
+│ • Each instruction has at most 3 operands                │
+│ • Temporary variables (t0, t1, ...) for expressions      │
+└──────────────────────────────────────────────────────────┘
+TAC: Temporary allocator initialized
+    [TAC ALLOC] Allocating new temporary t0
+    [TAC FREE] Released temporary t0
+    [TAC ALLOC] Reusing temporary t0
+    [TAC ALLOC] Allocating new temporary t1
+    [TAC FREE] Released temporary t0
+    [TAC FREE] Released temporary t1
+    [TAC ALLOC] Reusing temporary t1
+    [TAC FREE] Released temporary t1
+Unoptimized TAC Instructions:
+─────────────────────────────
+  1: FUNC_BEGIN main
+  2: ARRAY_DECL list[5]
+  3: ARRAY_ASSIGN list[0] = 1
+  4: ARRAY_ASSIGN list[1] = 2
+  5: ARRAY_ASSIGN list[2] = 3
+  6: ARRAY_ASSIGN list[3] = 4
+  7: ARRAY_ASSIGN list[4] = 5
+  8: DECL i
+  9: i = 0
+ 10: L0:
+ 11: t0 = i < 5
+ 12: IF_FALSE t0 GOTO L1
+ 13: t0 = list[i]
+ 14: t1 = t0 * 2
+ 15: PRINT t1
+ 16: t1 = i + 1
+ 17: i = t1
+ 18: GOTO L0
+ 19: L1:
+ 20: FUNC_END main
+
+┌──────────────────────────────────────────────────────────┐
+│ TEMPORARY ALLOCATOR STATISTICS                           │
+├──────────────────────────────────────────────────────────┤
+│ Total temporaries used:        2                         │
+│ Currently allocated:           0                         │
+│ Available for reuse:           2                         │
+└──────────────────────────────────────────────────────────┘
+
+✓ Unoptimized TAC saved to: test.tac
+┌──────────────────────────────────────────────────────────┐
+│ PHASE 5: CODE OPTIMIZATION                               │
+├──────────────────────────────────────────────────────────┤
+│ Applying optimizations:                                  │
+│ • Constant folding (evaluate compile-time expressions)   │
+│ • Copy propagation (replace variables with values)       │
+└──────────────────────────────────────────────────────────┘
+Optimized TAC Instructions:
+─────────────────────────────
+  1: FUNC_BEGIN main
+  2: ARRAY_DECL list[5]
+  3: ARRAY_ASSIGN list[0] = 1
+  4: ARRAY_ASSIGN list[1] = 2
+  5: ARRAY_ASSIGN list[2] = 3
+  6: ARRAY_ASSIGN list[3] = 4
+  7: ARRAY_ASSIGN list[4] = 5
+  8: DECL i
+  9: i = 0
+ 10: L0:
+ 11: t0 = i < 5
+ 12: IF_FALSE t0 GOTO L1
+ 13: t0 = list[i]
+ 14: t1 = t0 * 2
+ 15: PRINT t1
+ 16: t1 = i + 1
+ 17: i = t1
+ 18: GOTO L0
+ 19: L1:
+ 20: FUNC_END main
+
+✓ Optimized TAC saved to: test.optimized.tac
+┌──────────────────────────────────────────────────────────┐
+│ PHASE 6: MIPS CODE GENERATION                            │
+├──────────────────────────────────────────────────────────┤
+│ Translating OPTIMIZED TAC to MIPS assembly:              │
+│ • Using optimized TAC (with constant folding)            │
+│ • Variables stored on stack                              │
+│ • Register allocation with LRU spilling                  │
+│ • System calls for print operations                      │
+└──────────────────────────────────────────────────────────┘
+SYMBOL TABLE: Initialized
+
+=== SYMBOL TABLE STATE ===
+Count: 0, Next Offset: 0
+(empty)
+==========================
+
+MIPS: Register allocator initialized (10 temp registers: $t0-$t9)
+
+SYMBOL TABLE: Initialized
+
+=== SYMBOL TABLE STATE ===
+Count: 0, Next Offset: 0
+(empty)
+==========================
+
+MIPS: Register allocator initialized (10 temp registers: $t0-$t9)
+
+SYMBOL TABLE: Variable 'list' not found
+SYMBOL TABLE: Added array 'list' of size 5 at offset 0
+
+=== SYMBOL TABLE STATE ===
+Count: 1, Next Offset: 20
+Variables:
+  [0] list[5] (int) -> offset 0
+==========================
+
+SYMBOL TABLE: Found variable 'list' at offset 0
+    [REG ALLOC] Allocated $t0 for 'idx_const_0'
+    [REG ALLOC] Allocated $t1 for 'val_const_1'
+    [REG ALLOC] Allocated $t2 for '__arr_addr'
+    [REG ALLOC] Freed $t0
+    [REG ALLOC] Freed $t2
+SYMBOL TABLE: Found variable 'list' at offset 0
+    [REG ALLOC] Allocated $t0 for 'idx_const_1'
+    [REG ALLOC] Allocated $t2 for 'val_const_2'
+    [REG ALLOC] Allocated $t3 for '__arr_addr'
+    [REG ALLOC] Freed $t0
+    [REG ALLOC] Freed $t3
+SYMBOL TABLE: Found variable 'list' at offset 0
+    [REG ALLOC] Allocated $t0 for 'idx_const_2'
+    [REG ALLOC] Allocated $t3 for 'val_const_3'
+    [REG ALLOC] Allocated $t4 for '__arr_addr'
+    [REG ALLOC] Freed $t0
+    [REG ALLOC] Freed $t4
+SYMBOL TABLE: Found variable 'list' at offset 0
+    [REG ALLOC] Allocated $t0 for 'idx_const_3'
+    [REG ALLOC] Allocated $t4 for 'val_const_4'
+    [REG ALLOC] Allocated $t5 for '__arr_addr'
+    [REG ALLOC] Freed $t0
+    [REG ALLOC] Freed $t5
+SYMBOL TABLE: Found variable 'list' at offset 0
+    [REG ALLOC] Allocated $t0 for 'idx_const_4'
+    [REG ALLOC] Allocated $t5 for 'val_const_5'
+    [REG ALLOC] Allocated $t6 for '__arr_addr'
+    [REG ALLOC] Freed $t0
+    [REG ALLOC] Freed $t6
+SYMBOL TABLE: Variable 'i' not found
+SYMBOL TABLE: Added variable 'i' at offset 20
+
+=== SYMBOL TABLE STATE ===
+Count: 2, Next Offset: 24
+Variables:
+  [0] list[5] (int) -> offset 0
+  [1] i (int) -> offset 20
+==========================
+
+SYMBOL TABLE: Found variable 'i' at offset 20
+    [REG ALLOC] Allocated $t0 for 'i'
+    [REG ALLOC] Allocated $t6 for 'const_5'
+    [REG ALLOC] Allocated $t7 for 't0'
+    [REG ALLOC] Freed $t7
+SYMBOL TABLE: Found variable 'list' at offset 0
+    [REG ALLOC] Allocated $t7 for '__idx_shift'
+    [REG ALLOC] Allocated $t8 for 't0'
+    [REG ALLOC] Freed $t7
+    [REG ALLOC] Freed $t0
+    [REG ALLOC] Allocated $t0 for 'const_2'
+    [REG ALLOC] Allocated $t7 for 't1'
+    [REG ALLOC] Freed $t7
+SYMBOL TABLE: Found variable 'i' at offset 20
+    [REG ALLOC] Allocated $t7 for 'i'
+    [REG ALLOC] Allocated $t9 for 'const_1'
+    [REG ALLOC] All registers full, spilling $t1 (val_const_1)
+    [REG ALLOC] Allocated $t1 for 't1'
+SYMBOL TABLE: Found variable 'i' at offset 20
+    [REG ALLOC] Variable 'i' already in $t7
+
+┌──────────────────────────────────────────────────────────┐
+│ REGISTER ALLOCATION STATISTICS                           │
+├──────────────────────────────────────────────────────────┤
+│ Total registers spilled:       0                         │
+│ Final register usage:                                    │
+│   $t0 : const_2                                   │
+│   $t1 : t1                                        │
+│   $t2 : val_const_2                               │
+│   $t3 : val_const_3                               │
+│   $t4 : val_const_4                               │
+│   $t5 : val_const_5                               │
+│   $t6 : const_5                                   │
+│   $t7 : i                                         │
+│   $t8 : t0                                        │
+│   $t9 : const_1                                   │
+└──────────────────────────────────────────────────────────┘
+
+✓ MIPS assembly code generated to: test.s
+
+╔════════════════════════════════════════════════════════════╗
+║                  COMPILATION SUCCESSFUL!                   ║
+║         Run the output file in a MIPS simulator            ║
+╚════════════════════════════════════════════════════════════╝
+L0:                    # Label
+    li $t6, 5         # Load constant 5
+    slt $t7, $t0, $t6   # t0 = i < 5
+    beqz $t7, L1       # Jump if false
+    # Array access: t0 = list[i]
+    move $t7, $t0    # copy index to scratch
+    sll $t7, $t7, 2    # index * 4
+    addi $t8, $sp, 0   # base address of 'list'
+    add $t8, $t8, $t7 # element address
+    lw $t8, 0($t8)     # load value
+    li $t0, 2         # Load constant 2
+    mul $t7, $t8, $t0   # t1 = t0 * 2
+    # Print integer
+    move $a0, $t7
+    li $v0, 1
+    syscall
+    # Print newline
+    li $v0, 11
+    li $a0, 10
+    syscall
+    lw $t7, 20($sp)     # Load variable 'i'
+    li $t9, 1         # Load constant 1
+    add $t1, $t7, $t9   # t1 = i + 1
+    move $t7, $t1       # i = t1
+    sw $t7, 20($sp)     # Store to 'i'
+    j L0              # Jump
+L1:                    # Label
+    # End of function main
+    addi $sp, $sp, 400
+    li $v0, 10
+    syscall
+There's still a problem. The comparison at the top uses $t0 but that register is overwritten with 2 inside the loop body. On the next iteration, slt $t7, $t0, $t6 compares 2 < 5 (always true) instead of the actual i. Let me look at how variables are loaded in comparisons:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 528-602)
+The issue is deeper: the register allocator runs once at code generation time, so slt $t7, $t0, $t6 is emitted with $t0 because that's where i lives when the code generator first sees the comparison — but at runtime, $t0 gets clobbered by li $t0, 2 inside the loop body, and the second iteration compares 2 < 5 forever.
+
+The fix: for named variables (not TAC temporaries), always load fresh from memory instead of trusting the register cache. This guarantees correctness across loop iterations:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Removed 2 lines
+Also apply the same fix to TAC_ARRAY_ACCESS — when the index is a variable, load it fresh from memory:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Modified
+Bash
+IN
+wsl -e bash -c "cd /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal && gcc -g -Wall -c codegen.c -o codegen.o 2>&1 && gcc -g -Wall -o minicompiler lex.yy.o parser.tab.o main.o ast.o symtab.o codegen.o tac.o semantic.o 2>&1 && echo 'Build OK'"
+
+OUT
+codegen.c: In function ‘genExpr’:
+codegen.c:261:1: warning: control reaches end of non-void function [-Wreturn-type]
+  261 | }
+      | ^
+Build OK
+Bash
+IN
+wsl -e bash -c "cd /mnt/c/Users/15203/Downloads/CST-405-minimal/CST-405-minimal && ./minicompiler test.cm test.s 2>/dev/null && grep -A 25 'L0:' test.s"
+
+OUT
+╔════════════════════════════════════════════════════════════╗
+║          MINIMAL C COMPILER - EDUCATIONAL VERSION          ║
+╚════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────┐
+│ PHASE 1: LEXICAL & SYNTAX ANALYSIS                       │
+├──────────────────────────────────────────────────────────┤
+│ • Reading source file: test.cm
+│ • Tokenizing input (scanner.l)
+│ • Parsing grammar rules (parser.y)
+│ • Building Abstract Syntax Tree
+└──────────────────────────────────────────────────────────┘
+SYMBOL TABLE: Variable 'list' not found
+SYMBOL TABLE: Added array 'list' of size 5 at offset 0
+
+=== SYMBOL TABLE STATE ===
+Count: 1, Next Offset: 20
+Variables:
+  [0] list[5] (int) -> offset 0
+==========================
+
+SYMBOL TABLE: Variable 'i' not found
+SYMBOL TABLE: Added variable 'i' at offset 20
+
+=== SYMBOL TABLE STATE ===
+Count: 2, Next Offset: 24
+Variables:
+  [0] list[5] (int) -> offset 0
+  [1] i (int) -> offset 20
+==========================
+
+✓ Parse successful - program is syntactically correct!
+
+┌──────────────────────────────────────────────────────────┐
+│ PHASE 2: ABSTRACT SYNTAX TREE (AST)                      │
+├──────────────────────────────────────────────────────────┤
+│ Tree structure representing the program hierarchy:       │
+└──────────────────────────────────────────────────────────┘
+FUNC_DEF: main
+  BODY:
+    BLOCK
+                                                      ARRAY_DECL: list[5]
+            ARRAY_ASSIGN: list[] =
+      Index:
+        NUM: 0
+      Value:
+        NUM: 1
+            ARRAY_ASSIGN: list[] =
+      Index:
+        NUM: 1
+      Value:
+        NUM: 2
+            ARRAY_ASSIGN: list[] =
+      Index:
+        NUM: 2
+      Value:
+        NUM: 3
+            ARRAY_ASSIGN: list[] =
+      Index:
+        NUM: 3
+      Value:
+        NUM: 4
+            ARRAY_ASSIGN: list[] =
+      Index:
+        NUM: 4
+      Value:
+        NUM: 5
+      DECL: i (int)
+      FOR
+        INIT:
+          ASSIGN: i
+            NUM: 0
+        CONDITION:
+          BINOP: <
+            VAR: i
+            NUM: 5
+        UPDATE:
+          ASSIGN: i
+            BINOP: +
+              VAR: i
+              NUM: 1
+        BODY:
+          BLOCK
+            PRINT
+              BINOP: *
+                                ARRAY_ACCESS: list[]
+                Index:
+                  VAR: i
+                NUM: 2
+
+┌──────────────────────────────────────────────────────────┐
+│ PHASE 3: SEMANTIC ANALYSIS                               │
+├──────────────────────────────────────────────────────────┤
+│ Checking program semantics:                              │
+│ • Variable declarations and usage                        │
+│ • Type compatibility                                     │
+│ • Duplicate declarations                                 │
+└──────────────────────────────────────────────────────────┘
+SEMANTIC ANALYZER: Initialized with function support
+
+Running semantic analysis with function support...
+
+Entered global scope
+
+┌─────────────────────────────────────────────────────────┐
+│ SEMANTIC SCOPE STACK (Depth: 1)                        
+├─────────────────────────────────────────────────────────┤
+│ Scope[0] GLOBAL (0 variables)                        
+│   (empty)
+└─────────────────────────────────────────────────────────┘
+
+Pass 1: Registering all functions
+───────────────────────────────
+  ✓ Function 'main' defined with 0 parameter(s)
+
+Pass 2: Checking function bodies
+─────────────────────────────────
+─── Checking function: main ───
+  Entered function 'main' scope
+
+┌─────────────────────────────────────────────────────────┐
+│ SEMANTIC SCOPE STACK (Depth: 2)                        
+├─────────────────────────────────────────────────────────┤
+│ Scope[0] GLOBAL (0 variables)                        
+│   (empty)
+│ Scope[1] Function 'main' (0 variables)              
+│   (empty)
+└─────────────────────────────────────────────────────────┘
+
+  ✓ Array 'list[5]' declared (line 2)
+  ✓ Variable 'i' declared (line 8)
+  ✓ Checking for loop at line 11
+  ✓ Assignment to 'i' is valid (line 9)
+  ✓ Assignment to 'i' is valid (line 9)
+  ✓ Print statement is valid
+  Exiting function 'main' scope
+
+┌─────────────────────────────────────────────────────────┐
+│ SEMANTIC SCOPE STACK (Depth: 1)                        
+├─────────────────────────────────────────────────────────┤
+│ Scope[0] GLOBAL (0 variables)                        
+│   (empty)
+└─────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════
+SEMANTIC ANALYSIS SUMMARY
+═══════════════════════════════════════════
+Functions defined:  2
+Errors found:       0
+Warnings found:     0
+
+✓ Semantic analysis passed - program is semantically correct!
+═══════════════════════════════════════════
+
+┌──────────────────────────────────────────────────────────┐
+│ PHASE 4: INTERMEDIATE CODE GENERATION                    │
+├──────────────────────────────────────────────────────────┤
+│ Three-Address Code (TAC) - simplified instructions:      │
+│ • Each instruction has at most 3 operands                │
+│ • Temporary variables (t0, t1, ...) for expressions      │
+└──────────────────────────────────────────────────────────┘
+TAC: Temporary allocator initialized
+    [TAC ALLOC] Allocating new temporary t0
+    [TAC FREE] Released temporary t0
+    [TAC ALLOC] Reusing temporary t0
+    [TAC ALLOC] Allocating new temporary t1
+    [TAC FREE] Released temporary t0
+    [TAC FREE] Released temporary t1
+    [TAC ALLOC] Reusing temporary t1
+    [TAC FREE] Released temporary t1
+Unoptimized TAC Instructions:
+─────────────────────────────
+  1: FUNC_BEGIN main
+  2: ARRAY_DECL list[5]
+  3: ARRAY_ASSIGN list[0] = 1
+  4: ARRAY_ASSIGN list[1] = 2
+  5: ARRAY_ASSIGN list[2] = 3
+  6: ARRAY_ASSIGN list[3] = 4
+  7: ARRAY_ASSIGN list[4] = 5
+  8: DECL i
+  9: i = 0
+ 10: L0:
+ 11: t0 = i < 5
+ 12: IF_FALSE t0 GOTO L1
+ 13: t0 = list[i]
+ 14: t1 = t0 * 2
+ 15: PRINT t1
+ 16: t1 = i + 1
+ 17: i = t1
+ 18: GOTO L0
+ 19: L1:
+ 20: FUNC_END main
+
+┌──────────────────────────────────────────────────────────┐
+│ TEMPORARY ALLOCATOR STATISTICS                           │
+├──────────────────────────────────────────────────────────┤
+│ Total temporaries used:        2                         │
+│ Currently allocated:           0                         │
+│ Available for reuse:           2                         │
+└──────────────────────────────────────────────────────────┘
+
+✓ Unoptimized TAC saved to: test.tac
+┌──────────────────────────────────────────────────────────┐
+│ PHASE 5: CODE OPTIMIZATION                               │
+├──────────────────────────────────────────────────────────┤
+│ Applying optimizations:                                  │
+│ • Constant folding (evaluate compile-time expressions)   │
+│ • Copy propagation (replace variables with values)       │
+└──────────────────────────────────────────────────────────┘
+Optimized TAC Instructions:
+─────────────────────────────
+  1: FUNC_BEGIN main
+  2: ARRAY_DECL list[5]
+  3: ARRAY_ASSIGN list[0] = 1
+  4: ARRAY_ASSIGN list[1] = 2
+  5: ARRAY_ASSIGN list[2] = 3
+  6: ARRAY_ASSIGN list[3] = 4
+  7: ARRAY_ASSIGN list[4] = 5
+  8: DECL i
+  9: i = 0
+ 10: L0:
+ 11: t0 = i < 5
+ 12: IF_FALSE t0 GOTO L1
+ 13: t0 = list[i]
+ 14: t1 = t0 * 2
+ 15: PRINT t1
+ 16: t1 = i + 1
+ 17: i = t1
+ 18: GOTO L0
+ 19: L1:
+ 20: FUNC_END main
+
+✓ Optimized TAC saved to: test.optimized.tac
+┌──────────────────────────────────────────────────────────┐
+│ PHASE 6: MIPS CODE GENERATION                            │
+├──────────────────────────────────────────────────────────┤
+│ Translating OPTIMIZED TAC to MIPS assembly:              │
+│ • Using optimized TAC (with constant folding)            │
+│ • Variables stored on stack                              │
+│ • Register allocation with LRU spilling                  │
+│ • System calls for print operations                      │
+└──────────────────────────────────────────────────────────┘
+SYMBOL TABLE: Initialized
+
+=== SYMBOL TABLE STATE ===
+Count: 0, Next Offset: 0
+(empty)
+==========================
+
+MIPS: Register allocator initialized (10 temp registers: $t0-$t9)
+
+SYMBOL TABLE: Initialized
+
+=== SYMBOL TABLE STATE ===
+Count: 0, Next Offset: 0
+(empty)
+==========================
+
+MIPS: Register allocator initialized (10 temp registers: $t0-$t9)
+
+SYMBOL TABLE: Variable 'list' not found
+SYMBOL TABLE: Added array 'list' of size 5 at offset 0
+
+=== SYMBOL TABLE STATE ===
+Count: 1, Next Offset: 20
+Variables:
+  [0] list[5] (int) -> offset 0
+==========================
+
+SYMBOL TABLE: Found variable 'list' at offset 0
+    [REG ALLOC] Allocated $t0 for 'idx_const_0'
+    [REG ALLOC] Allocated $t1 for 'val_const_1'
+    [REG ALLOC] Allocated $t2 for '__arr_addr'
+    [REG ALLOC] Freed $t0
+    [REG ALLOC] Freed $t2
+SYMBOL TABLE: Found variable 'list' at offset 0
+    [REG ALLOC] Allocated $t0 for 'idx_const_1'
+    [REG ALLOC] Allocated $t2 for 'val_const_2'
+    [REG ALLOC] Allocated $t3 for '__arr_addr'
+    [REG ALLOC] Freed $t0
+    [REG ALLOC] Freed $t3
+SYMBOL TABLE: Found variable 'list' at offset 0
+    [REG ALLOC] Allocated $t0 for 'idx_const_2'
+    [REG ALLOC] Allocated $t3 for 'val_const_3'
+    [REG ALLOC] Allocated $t4 for '__arr_addr'
+    [REG ALLOC] Freed $t0
+    [REG ALLOC] Freed $t4
+SYMBOL TABLE: Found variable 'list' at offset 0
+    [REG ALLOC] Allocated $t0 for 'idx_const_3'
+    [REG ALLOC] Allocated $t4 for 'val_const_4'
+    [REG ALLOC] Allocated $t5 for '__arr_addr'
+    [REG ALLOC] Freed $t0
+    [REG ALLOC] Freed $t5
+SYMBOL TABLE: Found variable 'list' at offset 0
+    [REG ALLOC] Allocated $t0 for 'idx_const_4'
+    [REG ALLOC] Allocated $t5 for 'val_const_5'
+    [REG ALLOC] Allocated $t6 for '__arr_addr'
+    [REG ALLOC] Freed $t0
+    [REG ALLOC] Freed $t6
+SYMBOL TABLE: Variable 'i' not found
+SYMBOL TABLE: Added variable 'i' at offset 20
+
+=== SYMBOL TABLE STATE ===
+Count: 2, Next Offset: 24
+Variables:
+  [0] list[5] (int) -> offset 0
+  [1] i (int) -> offset 20
+==========================
+
+SYMBOL TABLE: Found variable 'i' at offset 20
+    [REG ALLOC] Allocated $t0 for 'i'
+SYMBOL TABLE: Found variable 'i' at offset 20
+    [REG ALLOC] Variable 'i' already in $t0
+    [REG ALLOC] Allocated $t6 for 'const_5'
+    [REG ALLOC] Allocated $t7 for 't0'
+    [REG ALLOC] Freed $t7
+SYMBOL TABLE: Found variable 'list' at offset 0
+SYMBOL TABLE: Found variable 'i' at offset 20
+    [REG ALLOC] Variable 'i' already in $t0
+    [REG ALLOC] Allocated $t7 for '__idx_shift'
+    [REG ALLOC] Allocated $t8 for 't0'
+    [REG ALLOC] Freed $t7
+    [REG ALLOC] Freed $t0
+    [REG ALLOC] Allocated $t0 for 'const_2'
+    [REG ALLOC] Allocated $t7 for 't1'
+    [REG ALLOC] Freed $t7
+SYMBOL TABLE: Found variable 'i' at offset 20
+    [REG ALLOC] Allocated $t7 for 'i'
+    [REG ALLOC] Allocated $t9 for 'const_1'
+    [REG ALLOC] All registers full, spilling $t1 (val_const_1)
+    [REG ALLOC] Allocated $t1 for 't1'
+SYMBOL TABLE: Found variable 'i' at offset 20
+    [REG ALLOC] Variable 'i' already in $t7
+
+┌──────────────────────────────────────────────────────────┐
+│ REGISTER ALLOCATION STATISTICS                           │
+├──────────────────────────────────────────────────────────┤
+│ Total registers spilled:       0                         │
+│ Final register usage:                                    │
+│   $t0 : const_2                                   │
+│   $t1 : t1                                        │
+│   $t2 : val_const_2                               │
+│   $t3 : val_const_3                               │
+│   $t4 : val_const_4                               │
+│   $t5 : val_const_5                               │
+│   $t6 : const_5                                   │
+│   $t7 : i                                         │
+│   $t8 : t0                                        │
+│   $t9 : const_1                                   │
+└──────────────────────────────────────────────────────────┘
+
+✓ MIPS assembly code generated to: test.s
+
+╔════════════════════════════════════════════════════════════╗
+║                  COMPILATION SUCCESSFUL!                   ║
+║         Run the output file in a MIPS simulator            ║
+╚════════════════════════════════════════════════════════════╝
+L0:                    # Label
+    lw $t0, 20($sp)     # Load variable 'i'
+    li $t6, 5         # Load constant 5
+    slt $t7, $t0, $t6   # t0 = i < 5
+    beqz $t7, L1       # Jump if false
+    lw $t0, 20($sp)     # Load index 'i'
+    # Array access: t0 = list[i]
+    move $t7, $t0    # copy index to scratch
+    sll $t7, $t7, 2    # index * 4
+    addi $t8, $sp, 0   # base address of 'list'
+    add $t8, $t8, $t7 # element address
+    lw $t8, 0($t8)     # load value
+    li $t0, 2         # Load constant 2
+    mul $t7, $t8, $t0   # t1 = t0 * 2
+    # Print integer
+    move $a0, $t7
+    li $v0, 1
+    syscall
+    # Print newline
+    li $v0, 11
+    li $a0, 10
+    syscall
+    lw $t7, 20($sp)     # Load variable 'i'
+    li $t9, 1         # Load constant 1
+    add $t1, $t7, $t9   # t1 = i + 1
+    move $t7, $t1       # i = t1
+The generated loop now correctly loads i fresh from memory at the top of each iteration (lw $t0, 20($sp)) before the comparison AND before the array access. Run it in SPIM and you should get:
+
+
+2
+4
+6
+8
+10
+Summary of what was wrong and what was fixed:
+
+The code generator does a single linear pass over the TAC, so register assignments are only valid for that one pass — not for repeated loop iterations at runtime. Two bugs compounded:
+
+sll clobbered i in-place — TAC_ARRAY_ACCESS shifted the index register in-place (sll $t0, $t0, 2), destroying i's value. Fixed by copying to a scratch register first.
+
+Named variables trusted the register cache across loop iterations — TAC_LT would emit slt $tN, $t0, $t5 using whatever register happened to hold i at code-gen time, but at runtime $t0 was overwritten with the constant 2 inside the loop body. Fixed by always reloading named variables (non-TAC-temps) from their stack slot in arithmetic/comparison operations, guaranteeing a fresh value every iteration.
+
