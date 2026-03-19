@@ -4126,3 +4126,118 @@ The issue is clear. In tac.c:419, the TAC_DECL for switchVar passes NULL as the 
 Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c
 Modified
 The TAC_DECL handler in codegen calls addVar(curr->result, curr->type) and then printfs curr->type — both dereference the type pointer, so passing NULL caused the segfault. Changing it to "int" registers __sw0 in the symbol table with a valid type before the subsequent TAC_ASSIGN tries to look it up.
+
+int grade(int score) {
+    switch (score) {
+        case 1: return 10;
+        case 2: return 20;
+        case 3: return 30;
+        default: return 99;
+    }
+}
+
+int main() {
+    int x;
+    x = 2;
+    switch (x) {
+        case 1: print(10); break;
+        case 2: print(20); break;
+        case 3: print(30); break;
+        default: print(0); break;
+    }
+    x = 99;
+    switch (x) {
+        case 1: print(10); break;
+        case 2: print(20); break;
+        default: print(0); break;
+    }
+    x = 3;
+    switch (x) {
+        case 3: print(30); break;
+        case 4: print(40); break;
+        default: print(0); break;
+    }
+    x = 4;
+    switch (x) {
+        case 4:
+        case 5: print(10); break;
+        default: print(0); break;
+    }
+    x = 15;
+    int d;
+    d = x / 10;
+    switch (d) {
+        case 0: print(0); break;
+        case 1: print(1); break;
+        case 2: print(2); break;
+        default: print(9); break;
+    }
+    int g;
+    g = grade(3);
+    switch (g) {
+        case 30: print(7); break;
+        default: print(0); break;
+    }
+    int outer;
+    int inner;
+    outer = 2;
+    inner = 10;
+    switch (outer) {
+        case 1:
+            switch (inner) {
+                case 10: print(100); break;
+                default: print(0);   break;
+            }
+            break;
+        case 2:
+            switch (inner) {
+                case 10: print(200); break;
+                default: print(0);   break;
+            }
+            break;
+        default: print(0); break;
+    }
+    int i;
+    i = 0;
+    switch (i) {
+        case 0:
+            i = 1;
+            break;      /* exits switch, not any loop */
+        default:
+            i = 0;
+            break;
+    }
+    print(i);   /* should print 1 */
+
+    return 0;
+}
+
+The sixth value printed should be 7 but instead returns 0. How do I fix the error?
+Let me look at the codegen to understand how TAC_EQ comparisons and function calls/returns interact, since grade(3) returning correctly is key.
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Read C:\Users\15203\.claude\projects\c--Users-15203-Downloads-CST-405-minimal-CST-405-minimal\974c1cf8-c5ec-446b-b572-23a41afcbe3b\tool-results\toolu_01NyVzihcw21n8eTrPqj6hWD.txt (lines 2-301)
+Read C:\Users\15203\.claude\projects\c--Users-15203-Downloads-CST-405-minimal-CST-405-minimal\974c1cf8-c5ec-446b-b572-23a41afcbe3b\tool-results\toolu_01NyVzihcw21n8eTrPqj6hWD.txt (lines 301-600)
+Read C:\Users\15203\.claude\projects\c--Users-15203-Downloads-CST-405-minimal-CST-405-minimal\974c1cf8-c5ec-446b-b572-23a41afcbe3b\tool-results\toolu_01NyVzihcw21n8eTrPqj6hWD.txt (lines 601-800)
+Read C:\Users\15203\.claude\projects\c--Users-15203-Downloads-CST-405-minimal-CST-405-minimal\974c1cf8-c5ec-446b-b572-23a41afcbe3b\tool-results\toolu_01NyVzihcw21n8eTrPqj6hWD.txt (lines 801-1000)
+Read C:\Users\15203\.claude\projects\c--Users-15203-Downloads-CST-405-minimal-CST-405-minimal\974c1cf8-c5ec-446b-b572-23a41afcbe3b\tool-results\toolu_01NyVzihcw21n8eTrPqj6hWD.txt (lines 1000-1099)
+Found the bug. In TAC_RETURN (codegen.c line 825), it moves the return value to $v0 but never jumps anywhere — no jr $ra, no jump to epilogue. So after return 30 in grade's case 3, execution falls straight into the next body label (case default: return 99), which overwrites $v0 with 99. Hence g = grade(3) = 99, which doesn't match case 30, so print(0) runs instead of print(7).
+
+The fix is to track the current function name and emit the full return sequence inside TAC_RETURN. Let me look at the exact lines to edit:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 435-479)
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 821-870)
+Now I'll add a currentFuncName tracker and fix TAC_RETURN to emit the actual return sequence:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Added 4 lines
+Now fix TAC_RETURN to emit the actual epilogue jump:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Added 9 lines
+The root cause was that TAC_RETURN emitted move $v0, $t{N} but no jump, so execution fell through to the next case body label. For grade(3), after writing 30 into $v0, it would immediately fall into the default body and overwrite $v0 with 99 — so grade(3) returned 99 instead of 30, g was 99, and switch(g) hit the default clause printing 0.
+
+The fix:
+
+Tracks the current function name in currentFuncName when TAC_FUNC_BEGIN is processed.
+In TAC_RETURN, after moving the value to $v0, emits the full return epilogue — lw $ra + addi $sp + jr $ra for non-main functions, or the exit syscall for main.
