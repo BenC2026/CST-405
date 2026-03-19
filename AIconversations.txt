@@ -4039,3 +4039,90 @@ sll clobbered i in-place — TAC_ARRAY_ACCESS shifted the index register in-plac
 
 Named variables trusted the register cache across loop iterations — TAC_LT would emit slt $tN, $t0, $t5 using whatever register happened to hold i at code-gen time, but at runtime $t0 was overwritten with the constant 2 inside the loop body. Fixed by always reloading named variables (non-TAC-temps) from their stack slot in arithmetic/comparison operations, guaranteeing a fresh value every iteration.
 
+Can you fill in the TODOs in the NODE_SWITCH case in semantic.c?
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\semantic.c
+Let me check the AST node definitions to understand the case_clause structure.
+
+Globpattern: "**/*.h"
+Found 7 files
+Grep "case_clause" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\ast.h)
+1 line of output
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\ast.h (lines 161-185)
+Now I have everything I need. Here are the four TODOs filled in:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\semantic.c
+Added 15 lines
+The four TODOs in semantic.c:454-461 are now filled in:
+
+Duplicate default check — if hasDefault is already set, emit an error and increment semInfo.errorCount; then set hasDefault = 1.
+Duplicate case value check — linear scan of seenValues[] for the current value; emit an error on a hit.
+Record case value — append the new value to seenValues[seenCount++].
+Check case body — call checkStmt(c->data.case_clause.body), which handles NULL bodies (fall-through) safely since checkStmt guards with if (!node) return.
+Can you fill in the TODOs for the NODE_SWITCH case in generateTACStmt in tac.c?
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c
+Now I can see exactly what needs to be filled in. The three emit TODOs in the dispatch loop at lines 454–461 are:
+
+Emit TAC_EQ to compare switchVar against caseConst
+Emit TAC_IF_FALSE to jump to failLabel when not equal
+Emit TAC_GOTO to the matched case's body label
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c
+Added 5 lines
+Done. Here's what was added in tac.c:454-466:
+
+TAC_EQ — allocates a fresh temp (cmpTemp) and emits cmpTemp = switchVar == caseConst to test the current case value.
+TAC_IF_FALSE — emits IF_FALSE cmpTemp GOTO failLabel; if the comparison is false (no match), control falls to the next case test (or labelDispatchDone on the last iteration).
+freeTemp(cmpTemp) — releases the comparison temp immediately after it's consumed by IF_FALSE.
+TAC_GOTO bodyLabels[i] — when the comparison is true (match found), jumps directly to that case's body label.
+Can you fill in the TODO at line 450 of tac.c?
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c (lines 447-461)
+The TODO comment at line 450 is already implemented — the char caseConst[32] declaration and sprintf on lines 451–452 are exactly the code that builds the case constant string. The comment just wasn't removed. I'll clean it up:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c
+Removed 1 line
+The TODO was already implemented — sprintf(caseConst, "%d", cas->data.case_clause.value) converts the integer case value to a string. The stale comment has been removed.
+
+Can you add the fifth parameter for every createTAC in the NODE_SWITCH and NODE_BREAK cases in generateTACStmt in tac.c?
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c (lines 413-507)
+The calls missing a 5th NULL argument are on lines 419, 422, 473, 477, 479, 481, 485, 491, and 502.
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c
+Modified
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c
+Modified
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c
+Modified
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c
+Modified
+All 9 calls now have the fifth NULL argument:
+
+Line	Call
+419	TAC_DECL ... switchVar, NULL
+422	TAC_ASSIGN ... switchVar, NULL
+473	TAC_LABEL ... failLabel, NULL
+477	TAC_LABEL ... labelDispatchDone, NULL
+479	TAC_GOTO ... bodyLabels[defaultIdx], NULL
+481	TAC_GOTO ... labelEnd, NULL
+485	TAC_LABEL ... bodyLabels[i], NULL
+491	TAC_LABEL ... labelEnd, NULL
+502	TAC_GOTO ... target, NULL
+How do I fix this error:
+The segfault is because __sw0 is emitted as a TAC_DECL instruction but never registered in the symbol table. Let me look at how other TAC_DECL instructions are handled in code generation.
+
+Globpattern: "*.c"
+Found 10 files
+Grep "TAC_DECL" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+13 lines of output
+Grep "TAC_ASSIGN" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+18 lines of output
+Grep "getVarOffset" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+21 lines of output
+Now let me check what addVar expects and how TAC_DECL uses the type field:
+
+Grep "addVar" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\symtab.c)
+11 lines of output
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 517-531)
+The issue is clear. In tac.c:419, the TAC_DECL for switchVar passes NULL as the type, but codegen's TAC_DECL handler passes curr->type straight to addVar and then prints it — causing the segfault when __sw0's type is NULL. The fix is to pass "int" as the type:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c
+Modified
+The TAC_DECL handler in codegen calls addVar(curr->result, curr->type) and then printfs curr->type — both dereference the type pointer, so passing NULL caused the segfault. Changing it to "int" registers __sw0 in the symbol table with a valid type before the subsequent TAC_ASSIGN tries to look it up.
