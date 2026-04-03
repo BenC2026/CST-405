@@ -14,16 +14,24 @@ struct keyword {
     int token;
 };
 
-#define NUM_KEYWORDS 8
+#define NUM_KEYWORDS 16
 static struct keyword keywords[] = {
     {"int", INT},
+    {"string", STRING_KW},
     {"float", FLOAT},
     {"print", PRINT},
     {"return", RETURN},
     {"if", IF},
     {"else", ELSE},
     {"while", WHILE},
-    {"for", FOR}
+    {"for", FOR},
+    {"switch", SWITCH},
+    {"case", CASE},
+    {"break", BREAK},
+    {"default", DEFAULT},
+    {"and", AND_KW},
+    {"or", OR_KW},
+    {"not", NOT_KW}
 };
 
 int keyword_hash(const char* str) {
@@ -52,6 +60,7 @@ int check_keyword(const char* str) {
 %%
 
 "int"           { return INT; }
+"string"        { return STRING_KW; }
 "float"         { return FLOAT; }
 "print"         { return PRINT; }
 "return"        { return RETURN; }
@@ -59,6 +68,15 @@ int check_keyword(const char* str) {
 "else"          { return ELSE; }
 "while"         { return WHILE; }
 "for"           { return FOR; }
+"switch"        { return SWITCH; }
+"case"          { return CASE; }
+"break"         { return BREAK; }
+"default"       { return DEFAULT; }
+"and"           { return AND_KW; }
+"or"            { return OR_KW; }
+"not"           { return NOT_KW; }
+
+":"             { return ':'; }
 
 [a-zA-Z_][a-zA-Z0-9_]* {
     int token = check_keyword(yytext);
@@ -66,6 +84,11 @@ int check_keyword(const char* str) {
         yylval.str = strdup(yytext);
     }
     return token;
+}
+
+[0-9]+\.[0-9]+  {
+    yylval.fval = atof(yytext);
+    return FLOAT_LIT;
 }
 
 [0-9]+          {
@@ -99,6 +122,12 @@ int check_keyword(const char* str) {
 
 "//".*          { /* Skip single-line comments */ }
 "/*"([^*]|\*+[^*/])*\*+"/"  { /* Skip multi-line comments */ }
+
+\"([^\\\"]|\\.)*\"   {
+    /* strip surrounding quotes */
+    yylval.sval = strndup(yytext+1, yyleng-2);
+    return STRING_LITERAL;
+}
 
 [ \t\n]         { }
 
