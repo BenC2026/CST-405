@@ -58,6 +58,15 @@ int getVarOffset(char* name) {
     return -1;  /* Variable not found - semantic error */
 }
 
+/* Look up a variable's type string ("int", "float", etc.), NULL if not found */
+char* getVarType(char* name) {
+    for (int i = 0; i < symtab.count; i++) {
+        if (strcmp(symtab.vars[i].name, name) == 0)
+            return symtab.vars[i].type;
+    }
+    return NULL;
+}
+
 /* Check if a variable has been declared */
 int isVarDeclared(char* name) {
     return getVarOffset(name) != -1;  /* True if found, false otherwise */
