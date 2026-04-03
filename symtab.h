@@ -10,6 +10,16 @@
 
 #define MAX_VARS 1000  /* Maximum number of variables supported */
 
+/* VARIABLE TYPES */
+typedef enum {
+    TYPE_INT,
+    TYPE_FLOAT,
+    TYPE_CHAR,
+    TYPE_STRING,
+    TYPE_VOID,
+    TYPE_UNKNOWN
+} VarType;
+
 /* SYMBOL ENTRY - Information about each variable */
 typedef struct Symbol {
     char* name;     /* Variable identifier */
@@ -39,6 +49,7 @@ extern SymbolTable symtab;
 void initSymTab();               /* Initialize empty symbol table */
 int addVar(char* name, char* type);          /* Add new variable, returns offset or -1 if duplicate */
 int getVarOffset(char* name);    /* Get stack offset for variable, -1 if not found */
+char* getVarType(char* name);    /* Get type string for variable, NULL if not found */
 int isVarDeclared(char* name);   /* Check if variable exists (1=yes, 0=no) */
 int addArrayVar(char* name, char* type, int size); /* Add new array variable */
 int isArrayVar(char* name);      /* Check if variable is an array (1=yes, 0=no) */
