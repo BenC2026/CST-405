@@ -34,6 +34,7 @@ static Scope scopes[MAX_SCOPE_DEPTH];
 static int scopeDepth = 0;
 static char* currentFunction = NULL;
 static int inFunction = 0;
+static int breakDepth = 0;  /* Track nested loops for break/continue validity */
 
 /* Initialize semantic analyzer */
 void initSemantic() {
@@ -43,10 +44,26 @@ void initSemantic() {
     scopeDepth = 0;
     currentFunction = NULL;
     inFunction = 0;
+    breakDepth = 0;
 
     /* Add built-in functions */
     functions[functionCount].name = strdup("print");
     functions[functionCount].paramCount = 1;
+    functions[functionCount].isDefined = 1;  /* Built-in */
+    functionCount++;
+
+    functions[functionCount].name = strdup("output_string");
+    functions[functionCount].paramCount = 1;
+    functions[functionCount].isDefined = 1;  /* Built-in */
+    functionCount++;
+
+    functions[functionCount].name = strdup("string_equal");
+    functions[functionCount].paramCount = 2;
+    functions[functionCount].isDefined = 1;  /* Built-in */
+    functionCount++;
+
+    functions[functionCount].name = strdup("string_concat");
+    functions[functionCount].paramCount = 2;
     functions[functionCount].isDefined = 1;  /* Built-in */
     functionCount++;
 
@@ -212,6 +229,17 @@ static int countArgs(ASTNode* args) {
     return 1;
 }
 
+/* Map a type string (from the parser) to a VarType enum value */
+static VarType typeStringToVarType(const char* typeStr) {
+    if (!typeStr) return TYPE_UNKNOWN;
+    if (strcmp(typeStr, "int")    == 0) return TYPE_INT;
+    if (strcmp(typeStr, "string") == 0) return TYPE_STRING;
+    if (strcmp(typeStr, "float")  == 0) return TYPE_FLOAT;
+    if (strcmp(typeStr, "char")   == 0) return TYPE_CHAR;
+    if (strcmp(typeStr, "void")   == 0) return TYPE_VOID;
+    return TYPE_UNKNOWN;
+}
+
 /* Forward declarations */
 static void checkExpr(ASTNode* node);
 static void checkStmt(ASTNode* node);
@@ -292,15 +320,24 @@ static void checkStmt(ASTNode* node) {
     if (!node) return;
 
     switch(node->type) {
-        case NODE_DECL:
+        case NODE_DECL: {
+            VarType vt = typeStringToVarType(node->data.decl.type);
+            if (vt == TYPE_UNKNOWN) {
+                fprintf(stderr, "  ✗ SEMANTIC ERROR (line %d): Unknown type '%s' for variable '%s'\n",
+                        node->lineno, node->data.decl.type ? node->data.decl.type : "(null)",
+                        node->data.decl.name);
+                semInfo.errorCount++;
+            }
             if (addVarToScope(node->data.decl.name) == -1) {
                 fprintf(stderr, "  ✗ SEMANTIC ERROR (line %d): Variable '%s' already declared in this scope\n",
                         node->lineno, node->data.decl.name);
                 semInfo.errorCount++;
             } else {
-                printf("  ✓ Variable '%s' declared (line %d)\n", node->data.decl.name, node->lineno);
+                printf("  ✓ Variable '%s' declared as %s (line %d)\n",
+                       node->data.decl.name, node->data.decl.type, node->lineno);
             }
             break;
+        }
 
         case NODE_ARRAY_DECL:
             if (addVarToScope(node->data.array_decl.name) == -1) {
@@ -378,7 +415,9 @@ static void checkStmt(ASTNode* node) {
             }
 
             /* Check body */
+            breakDepth++;
             checkStmt(node->data.while_stmt.body);
+            breakDepth--;
             break;
 
         case NODE_FOR:
@@ -409,8 +448,10 @@ static void checkStmt(ASTNode* node) {
                 checkStmt(node->data.for_stmt.update);
             }
 
-             /* Check body */
+            /* Check body */
+            breakDepth++;
             checkStmt(node->data.for_stmt.body);
+            breakDepth--;
             break;
 
         case NODE_BLOCK:
@@ -418,6 +459,68 @@ static void checkStmt(ASTNode* node) {
             checkStmtList(node->data.block.stmt_list);
             exitScope();
             break;
+
+        case NODE_BREAK:
+            if (breakDepth == 0) {
+                fprintf(stderr, "\n╔════════════════════════════════════════╗\n");
+                fprintf(stderr, "║ SEMANTIC ERROR - break outside context ║\n");
+                fprintf(stderr, "╚════════════════════════════════════════╝\n");
+                fprintf(stderr, "  📍 Location: Line %d\n", node->lineno);
+                fprintf(stderr, "  ❌ 'break' must be inside a switch, for, or while\n\n");
+                semInfo.errorCount++;
+            } else {
+                printf("  ✓ break at line %d\n", node->lineno);
+            }
+            break;
+
+        case NODE_SWITCH: {
+            printf("  ✓ Checking switch statement at line %d\n", node->lineno);
+
+            /* 1. Check the controlling expression */
+            checkExpr(node->data.switch_stmt.expr);
+
+            /* 2. Walk case clauses */
+            int seenValues[512];
+            int seenCount = 0;
+            int hasDefault = 0;
+            ASTNode* c = node->data.switch_stmt.cases;
+
+            breakDepth++;   /* break is now valid inside case bodies */
+            while (c) {
+                if (c->data.case_clause.isDefault) {
+                    if (hasDefault) {
+                        fprintf(stderr, "  ✗ SEMANTIC ERROR (line %d): duplicate default clause in switch\n",
+                                c->lineno);
+                        semInfo.errorCount++;
+                    }
+                    hasDefault = 1;
+                } else {
+                    int val = c->data.case_clause.value;
+                    int duplicate = 0;
+                    for (int i = 0; i < seenCount; i++) {
+                        if (seenValues[i] == val) { duplicate = 1; break; }
+                    }
+                    if (duplicate) {
+                        fprintf(stderr, "  ✗ SEMANTIC ERROR (line %d): duplicate case value %d in switch\n",
+                                c->lineno, val);
+                        semInfo.errorCount++;
+                    } else {
+                        seenValues[seenCount++] = val;
+                    }
+                }
+                checkStmt(c->data.case_clause.body);
+                c = c->data.case_clause.next;
+            }
+            breakDepth--;
+
+            /* 3. Warn if no default clause */
+            if (!hasDefault) {
+                fprintf(stderr, "  ⚠  Warning: switch at line %d has no default clause\n\n",
+                        node->lineno);
+                semInfo.warningCount++;
+            }
+            break;
+        }
 
         case NODE_FUNC_CALL:
             /* Function call as statement */
