@@ -245,6 +245,49 @@ ASTNode* createArrayAccess(char* name, ASTNode* index) {
     return node;
 }
 
+ASTNode* createSwitch(ASTNode* expr, ASTNode* cases) {
+    ASTNode* node = malloc(sizeof(ASTNode));
+    node->type = NODE_SWITCH;
+    node->lineno = yylineno;
+    node->data.switch_stmt.expr  = expr;
+    node->data.switch_stmt.cases = cases;
+    return node;
+}
+
+ASTNode* createCase(int value, int isDefault, ASTNode* body) {
+    ASTNode* node = malloc(sizeof(ASTNode));
+    node->type = NODE_CASE;
+    node->lineno = yylineno;
+    node->data.case_clause.value     = value;
+    node->data.case_clause.isDefault = isDefault;
+    node->data.case_clause.body      = body;
+    node->data.case_clause.next      = NULL;  /* linked by parser */
+    return node;
+}
+
+ASTNode* createBreak() {
+    ASTNode* node = malloc(sizeof(ASTNode));
+    node->type   = NODE_BREAK;
+    node->lineno = yylineno;
+    return node;
+}
+
+ASTNode *makeStringLit(const char *s) {
+    ASTNode *n = (ASTNode*)ast_alloc(sizeof(ASTNode));
+    n->type = NODE_STRING_LIT;
+    n->lineno = yylineno;
+    n->sval = strdup(s);
+    return n;
+}
+
+ASTNode *makeFloatLit(double val) {
+    ASTNode *n = (ASTNode*)ast_alloc(sizeof(ASTNode));
+    n->type = NODE_FLOAT_LIT;
+    n->lineno = yylineno;
+    n->fval = val;
+    return n;
+}
+
 /* Display the AST structure (for debugging and education) */
 void printAST(ASTNode* node, int level) {
     if (!node) return;
@@ -256,6 +299,9 @@ void printAST(ASTNode* node, int level) {
     switch(node->type) {
         case NODE_NUM:
             printf("NUM: %d\n", node->data.num);
+            break;
+        case NODE_FLOAT_LIT:
+            printf("FLOAT: %g\n", node->fval);
             break;
         case NODE_VAR:
             printf("VAR: %s\n", node->data.decl.name);
@@ -373,6 +419,39 @@ void printAST(ASTNode* node, int level) {
             printf("%*sARRAY_ACCESS: %s[]\n", level*2, "", node->data.array_access.name);
             printf("%*sIndex:\n", level*2, "");
             printAST(node->data.array_access.index, level+1);
+            break;
+        case NODE_SWITCH:
+            printf("SWITCH\n");
+            for (int i = 0; i < level + 1; i++) printf("  ");
+            printf("EXPR:\n");
+            printAST(node->data.switch_stmt.expr,  level + 2);
+            for (int i = 0; i < level + 1; i++) printf("  ");
+            printf("CASES:\n");
+            printAST(node->data.switch_stmt.cases, level + 2);
+            break;
+
+        case NODE_CASE: {
+            /* Walk the linked list of case/default clauses */
+            ASTNode* c = node;
+            while (c) {
+                for (int i = 0; i < level; i++) printf("  ");
+                if (c->data.case_clause.isDefault)
+                    printf("DEFAULT:\n");
+                else
+                    printf("CASE %d:\n", c->data.case_clause.value);
+                if (c->data.case_clause.body)
+                    printAST(c->data.case_clause.body, level + 1);
+                else {
+                    for (int i = 0; i < level + 1; i++) printf("  ");
+                    printf("(empty - fall-through)\n");
+                }
+                c = c->data.case_clause.next;
+            }
+            break;
+        }
+
+        case NODE_BREAK:
+            printf("BREAK\n");
             break;
     }
 }
