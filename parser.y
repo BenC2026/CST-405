@@ -22,24 +22,34 @@ ASTNode* root = NULL;
 /* SEMANTIC VALUES UNION */
 %union {
     int num;
+    double fval;
     char* str;
+    char* sval;
     struct ASTNode* node;
 }
 
 /* TOKEN DECLARATIONS */
 %token <num> NUM
+%token <fval> FLOAT_LIT
 %token <str> ID
-%token INT FLOAT PRINT RETURN IF ELSE WHILE FOR
+%token <sval> STRING_LITERAL
+%token INT STRING_KW FLOAT PRINT RETURN IF ELSE WHILE FOR
+%token SWITCH CASE BREAK DEFAULT
 %token LE GE EQ NE
+%token AND_KW OR_KW NOT_KW
 
 /* NON-TERMINAL TYPES */
 %type <node> program decl_or_func_list decl_or_func
 %type <node> func_def params param_list param
 %type <node> stmt_list stmt decl assign expr print_stmt return_stmt
+%type <node> switch_stmt break_stmt case_list case_clause opt_stmt_list
 %type <node> if_stmt while_stmt for_stmt for_init for_cond for_update block
 %type <node> func_call arg_list args
 
 /* OPERATOR PRECEDENCE AND ASSOCIATIVITY */
+%left OR_KW
+%left AND_KW
+%right NOT_KW
 %left EQ NE
 %left '<' '>' LE GE
 %left '+' '-'
@@ -89,6 +99,14 @@ func_def:
         $$ = createFuncDef($2, NULL, $5);
         free($2);
     }
+    | STRING_KW ID '(' params ')' block {
+        $$ = createFuncDef($2, $4, $6);
+        free($2);
+    }
+    | STRING_KW ID '(' ')' block {
+        $$ = createFuncDef($2, NULL, $5);
+        free($2);
+    }
     | INT ID '[' ']' '(' params ')' block {
         $$ = createFuncDef($2, $6, $8);
         free($2);
@@ -126,6 +144,14 @@ param:
         $$ = createParam($2);
         free($2);
     }
+    | STRING_KW ID {
+        $$ = createParam($2);
+        free($2);
+    }
+    | STRING_KW ID '[' ']' {
+        $$ = createParam($2);
+        free($2);
+    }
     ;
 
 /* BLOCK STATEMENT */
@@ -157,6 +183,8 @@ stmt:
     | if_stmt
     | while_stmt
     | for_stmt
+    | switch_stmt
+    | break_stmt
     | block
     | func_call ';' { $$ = $1; }
     ;
@@ -173,9 +201,24 @@ decl:
         addVar($2, "float");
         free($2);
     }
+    | FLOAT ID '[' NUM ']' ';' {
+        $$ = createArrayDecl($2, "float", $4);
+        addArrayVar($2, "float", $4);
+        free($2);
+    }
     | INT ID '[' NUM ']' ';' {
         $$ = createArrayDecl($2, "int", $4);
         addArrayVar($2, "int", $4);
+        free($2);
+    }
+    | STRING_KW ID ';' {
+        $$ = createDecl($2, "string");
+        addVar($2, "string");
+        free($2);
+    }
+    | STRING_KW ID '[' NUM ']' ';' {
+        $$ = createArrayDecl($2, "string", $4);
+        addArrayVar($2, "string", $4);
         free($2);
     }
     ;
@@ -255,10 +298,65 @@ for_update:
     }
     ;
 
+/* SWITCH STATEMENT */
+switch_stmt:
+    SWITCH '(' expr ')' '{' case_list '}' {
+        $$ = createSwitch($3, $6);
+    }
+    ;
+
+/* CASE LIST - zero or more case/default clauses */
+case_list:
+    /* empty */ {
+        $$ = NULL;
+    }
+    | case_list case_clause {
+        /* Append the new clause to the END of the linked list */
+        if ($1 == NULL) {
+            $$ = $2;
+        } else {
+            ASTNode* tail = $1;
+            while (tail->data.case_clause.next)
+                tail = tail->data.case_clause.next;
+            tail->data.case_clause.next = $2;
+            $$ = $1;
+        }
+    }
+    ;
+
+/* CASE CLAUSE */
+case_clause:
+    CASE NUM ':' opt_stmt_list {
+        $$ = createCase($2, 0, $4);   /* isDefault = 0 */
+    }
+    | DEFAULT ':' opt_stmt_list {
+        $$ = createCase(0, 1, $3);   /* isDefault = 1 */
+    }
+    ;
+
+/* OPTIONAL STATEMENT LIST (may be empty) */
+opt_stmt_list:
+    /* empty */ { $$ = NULL; }
+    | stmt_list { $$ = $1; }
+    ;
+
+/* BREAK STATEMENT */
+break_stmt:
+    BREAK ';' {
+        $$ = createBreak();
+    }
+    ;
+
 /* EXPRESSION RULES */
 expr:
     NUM {
         $$ = createNum($1);
+    }
+    | STRING_LITERAL {
+        $$ = makeStringLit($1);
+    }
+    | FLOAT_LIT {
+        $$ = makeFloatLit($1);
     }
     | ID {
         $$ = createVar($1);
@@ -300,6 +398,15 @@ expr:
     }
     | expr NE expr {
         $$ = createBinOp('n', $1, $3);  /* 'n' for != */
+    }
+    | expr AND_KW expr {
+        $$ = createBinOp('&', $1, $3);  /* '&' for and */
+    }
+    | expr OR_KW expr {
+        $$ = createBinOp('|', $1, $3);  /* '|' for or */
+    }
+    | NOT_KW expr %prec NOT_KW {
+        $$ = createBinOp('!', $2, NULL); /* '!' for not (unary) */
     }
     | '-' expr %prec UMINUS {
         $$ = createBinOp('u', $2, NULL);  /* 'u' for unary minus */
