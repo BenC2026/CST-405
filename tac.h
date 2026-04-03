@@ -49,6 +49,13 @@ typedef enum {
     TAC_ARRAY_ASSIGN, /* result[arg1] = arg2 */
     TAC_ARRAY_ACCESS, /* result = arg1[arg2] */
 
+    TAC_STRING_ASSIGN, /* result = arg1 (string literal) */
+    TAC_FLOAT_ASSIGN,  /* result = arg1 (float literal, stored as text) */
+
+    TAC_AND,          /* result = arg1 && arg2 */
+    TAC_OR,           /* result = arg1 || arg2 */
+    TAC_NOT,          /* result = !arg1 (unary) */
+
     TAC_NOP           /* No operation (placeholder) */
 } TACOp;
 
@@ -89,7 +96,9 @@ char* newLabel();                                                  /* Generate n
 void printTempAllocatorState();                                    /* Display stats */
 
 TACInstr* createTAC(TACOp op, char* arg1, char* arg2, char* result, char* type); /* Create TAC */
+TACInstr* newTACInstr(TACOp op);                                  /* Allocate bare TACInstr */
 void appendTAC(TACInstr* instr);                                  /* Add to list */
+void emitTAC(TACInstr* instr);                                    /* Alias for appendTAC */
 void generateTAC(ASTNode* node);                                  /* Generate from AST */
 char* generateTACExpr(ASTNode* node);                             /* Generate for expr */
 
