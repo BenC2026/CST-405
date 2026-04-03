@@ -28,7 +28,12 @@ typedef enum {
     NODE_BLOCK,       /* Block statement { ... } */
     NODE_ARRAY_DECL,  /* Array declaration (e.g., int arr[10]) */
     NODE_ARRAY_ASSIGN,/* Array assignment (e.g., arr[0] = 5) */
-    NODE_ARRAY_ACCESS /* Array access (e.g., arr[0]) */
+    NODE_ARRAY_ACCESS,/* Array access (e.g., arr[0]) */
+    NODE_SWITCH,      /* Switch statement (not implemented yet) */
+    NODE_CASE,        /* Case in switch statement (not implemented yet) */
+    NODE_BREAK,       /* Break statement (not implemented yet) */
+    NODE_STRING_LIT,  /* String literal (e.g., "Hello") */
+    NODE_FLOAT_LIT    /* Floating-point literal (e.g., 3.14) */
 } NodeType;
 
 /* AST NODE STRUCTURE
@@ -38,6 +43,8 @@ typedef enum {
 typedef struct ASTNode {
     NodeType type;  /* Identifies what kind of node this is */
     int lineno;     /* Line number in source code for error reporting */
+    char* sval;     /* String literal value (NODE_STRING_LIT) */
+    double fval;    /* Float literal value (NODE_FLOAT_LIT) */
 
     /* Union allows same memory to store different data types */
     union {
@@ -124,12 +131,13 @@ typedef struct ASTNode {
             struct ASTNode* body;       /* Loop body */
         } while_stmt;
 
+        /* For loop (NODE_FOR) */
         struct {
             struct ASTNode* init;       /* Initialization statement */
             struct ASTNode* condition;  /* Loop condition */
             struct ASTNode* update;     /* Update statement */
             struct ASTNode* body;       /* Loop body */
-        } for_stmt; /* For loop (not implemented yet) */
+        } for_stmt;
 
         /* Block statement (NODE_BLOCK) */
         struct {
@@ -152,6 +160,22 @@ typedef struct ASTNode {
             char* name;                 /* Array name */
             struct ASTNode* index;      /* Index expression */
         } array_access;  /* Array access (NODE_ARRAY_ACCESS) */
+
+        /* Switch statement (NODE_SWITCH) */
+        struct {
+            struct ASTNode* expr;    /* Controlling expression (evaluated once) */
+            struct ASTNode* cases;   /* Linked list of NODE_CASE nodes */
+        } switch_stmt;
+
+        /* Case / default clause (NODE_CASE) 
+        * The 'next' pointer links this clause to the following one,
+        * forming a singly-linked list through all cases in the switch. */
+        struct {
+            int  value;              /* Case constant (unused when isDefault == 1) */
+            int  isDefault;          /* 1 → default clause, 0 → case clause */
+            struct ASTNode* body;    /* Statement list (NULL = empty/fall-through) */
+            struct ASTNode* next;    /* Next case/default clause */
+        } case_clause;
     } data;
 } ASTNode;
 
@@ -185,6 +209,17 @@ ASTNode* createBlock(ASTNode* stmt_list);                       /* Create block 
 ASTNode* createArrayDecl(char* name, char* type, int size);                /* Create array declaration */
 ASTNode* createArrayAssign(char* name, ASTNode* index, ASTNode* value); /* Create array assignment */
 ASTNode* createArrayAccess(char* name, ASTNode* index);          /* Create array access */
+
+/* Switch / case / break constructors */
+ASTNode* createSwitch(ASTNode* expr, ASTNode* cases);
+ASTNode* createCase(int value, int isDefault, ASTNode* body);
+ASTNode* createBreak();
+
+/* String literal constructor */
+ASTNode* makeStringLit(const char* s);
+
+/* Float literal constructor */
+ASTNode* makeFloatLit(double val);
 
 /* Memory pool initialization */
 void init_ast_memory(void);
