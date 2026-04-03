@@ -4241,3 +4241,451 @@ The fix:
 
 Tracks the current function name in currentFuncName when TAC_FUNC_BEGIN is processed.
 In TAC_RETURN, after moving the value to $v0, emits the full return epilogue — lw $ra + addi $sp + jr $ra for non-main functions, or the exit syscall for main.
+
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Summary:
+1. Primary Request and Intent:
+   The user is building a teaching compiler (CST-405-minimal) that compiles a C-like language to MIPS assembly for the SPIM simulator. Over the conversation, the user made the following explicit requests in order:
+   - Add `TYPE_STRING` to the `VarType` enum in symtab.h
+   - Handle `STRING_KW` in semantic.c variable-declaration walk
+   - Add `NODE_STRING_LIT` case in tac.c generateTAC()
+   - Handle `TAC_STRING_ASSIGN` in codegen.c with .data string table and `output_string` built-in
+   - Fix a "stray '\'" scanner.l compile error
+   - Fix "undefined reference to makeNode" linker error
+   - Fix "Function 'output_string' not declared" semantic error
+   - Fix syntax error for `string list[2];` (string array declaration)
+   - Fix syntax error for `int yesOrNo(string s)` (string parameter)
+   - Fix string equality returning 0 instead of 1 (string literal deduplication)
+   - Add `_heap_ptr` and `_heap_mem` to .data section
+   - Add `string_concat` and `string_equal` built-in functions
+   - Fix "foo" vs "foobar" / "Memory address out of bounds" bug in string_concat result capture
+   - Add `and`, `or`, `not` logical operators
+   - Implement float variables and decimal literal values
+   - Fix "Bad address in data/stack read: 0x00000000" (float using $fp instead of $sp)
+   - Fix float printing `5.40000010` — user wants `5.4` to print as `5.4`
+
+2. Key Technical Concepts:
+   - Flex/Bison compiler pipeline (scanner.l → parser.y → AST → semantic → TAC → codegen)
+   - MIPS assembly code generation targeting SPIM 8.0 simulator
+   - Three-Address Code (TAC) as IR between AST and machine code
+   - MIPS FPU registers ($f0-$f31), single-precision float instructions (add.s, sub.s, mul.s, div.s, l.s, s.s, mov.s)
+   - SPIM syscall conventions (syscall 1=print_int, syscall 2=print_float, syscall 4=print_string, syscall 11=print_char)
+   - IEEE 754 single-precision float limitations (5.4 not exactly representable)
+   - MIPS stack frame ($sp-based, no $fp setup in this compiler)
+   - String literal deduplication for address-equality comparison
+   - Heap memory management (_heap_ptr, _heap_mem) for string_concat
+   - LRU register allocation for both integer ($t0-$t9) and FPU ($f4-$f11) registers
+   - TAC type field ("float"/"int") for type propagation through intermediate representation
+   - Float temp tracking set for type propagation across TAC instructions
+
+3. Files and Code Sections:
+
+   - **symtab.h**
+     - Added `TYPE_STRING` to `VarType` enum (done by user/linter per system-reminder)
+     - Added `char* getVarType(char* name);` declaration
+     - Important for codegen.c to determine float vs int variables
+
+   - **symtab.c**
+     - Added `getVarType` implementation:
+     ```c
+     char* getVarType(char* name) {
+         for (int i = 0; i < symtab.count; i++) {
+             if (strcmp(symtab.vars[i].name, name) == 0)
+                 return symtab.vars[i].type;
+         }
+         return NULL;
+     }
+     ```
+
+   - **scanner.l**
+     - Added and/or/not to keyword table (NUM_KEYWORDS 13→16):
+     ```c
+     #define NUM_KEYWORDS 16
+     {"and", AND_KW}, {"or", OR_KW}, {"not", NOT_KW}
+     ```
+     - Added explicit lex rules: `"and" { return AND_KW; }` etc.
+     - String literal rule moved to rules section (after `%%`):
+     ```
+     \"([^\\\"]|\\.)*\"   {
+         yylval.sval = strndup(yytext+1, yyleng-2);
+         return STRING_LITERAL;
+     }
+     ```
+     - Float literal rule added before integer rule:
+     ```
+     [0-9]+\.[0-9]+  {
+         yylval.fval = atof(yytext);
+         return FLOAT_LIT;
+     }
+     ```
+
+   - **parser.y**
+     - Added `double fval` to `%union`
+     - Added `%token <fval> FLOAT_LIT` and `%token AND_KW OR_KW NOT_KW`
+     - Precedence: `%left OR_KW`, `%left AND_KW`, `%right NOT_KW` (below EQ NE)
+     - String array decl: `STRING_KW ID '[' NUM ']' ';'`
+     - String parameter: `STRING_KW ID { $ = createParam($2); }`
+     - Expr rules for and/or/not and FLOAT_LIT:
+     ```c
+     | expr AND_KW expr { $ = createBinOp('&', $1, $3); }
+     | expr OR_KW expr  { $ = createBinOp('|', $1, $3); }
+     | NOT_KW expr      { $ = createBinOp('!', $2, NULL); }
+     | FLOAT_LIT        { $ = makeFloatLit($1); }
+     ```
+     - func_def rules for STRING_KW return type added
+
+   - **ast.h**
+     - Added `NODE_FLOAT_LIT` to NodeType enum
+     - Added `double fval;` field to ASTNode struct (alongside `char* sval`)
+     - Added `ASTNode* makeFloatLit(double val);` declaration
+
+   - **ast.c**
+     - Added `makeFloatLit`:
+     ```c
+     ASTNode *makeFloatLit(double val) {
+         ASTNode *n = (ASTNode*)ast_alloc(sizeof(ASTNode));
+         n->type = NODE_FLOAT_LIT;
+         n->lineno = yylineno;
+         n->fval = val;
+         return n;
+     }
+     ```
+     - Added `NODE_FLOAT_LIT` case in printAST: `printf("FLOAT: %g\n", node->fval);`
+
+   - **tac.h**
+     - Added TAC opcodes: `TAC_STRING_ASSIGN`, `TAC_FLOAT_ASSIGN`, `TAC_AND`, `TAC_OR`, `TAC_NOT`
+     - Added `TACInstr* newTACInstr(TACOp op);` and `void emitTAC(TACInstr* instr);`
+
+   - **tac.c**
+     - Added `#include "symtab.h"` at top
+     - Added float temp tracking:
+     ```c
+     #define MAX_FLOAT_TEMPS 500
+     static char* floatTempSet[MAX_FLOAT_TEMPS];
+     static int floatTempCount = 0;
+     static int isFloatTempInTAC(const char* name) { ... }
+     static void markFloatTempInTAC(const char* name) { ... }
+     ```
+     - NODE_FLOAT_LIT handler in generateTACExpr:
+     ```c
+     case NODE_FLOAT_LIT: {
+         char* temp = allocTemp();
+         char buf[32];
+         snprintf(buf, sizeof(buf), "%g", node->fval);
+         TACInstr* instr = newTACInstr(TAC_FLOAT_ASSIGN);
+         instr->arg1 = strdup(buf);
+         instr->result = strdup(temp);
+         emitTAC(instr);
+         markFloatTempInTAC(temp);
+         return temp;
+     }
+     ```
+     - Float type propagation in NODE_BINOP:
+     ```c
+     int isFloat = 0;
+     if (left) { char* lt = getVarType(left); if ((lt && strcmp(lt,"float")==0) || isFloatTempInTAC(left)) isFloat=1; }
+     if (!isFloat && right) { char* rt = getVarType(right); if ((rt && strcmp(rt,"float")==0) || isFloatTempInTAC(right)) isFloat=1; }
+     char* resultType = isFloat ? "float" : "int";
+     if (isFloat) markFloatTempInTAC(temp);
+     ```
+     - And/or/not op char mapping: `'&'→TAC_AND`, `'|'→TAC_OR`, `'!'→TAC_NOT`
+     - TAC_FLOAT_ASSIGN in all 4 print/save functions: `printf/fprintf "%s = (float)%s\n"`
+
+   - **codegen.c**
+     - String deduplication: `isDup` field in `StrEntry`, `collectStringLiterals` checks for duplicate text and reuses labels
+     - Float literal table:
+     ```c
+     #define MAX_FLOAT_LITS 256
+     typedef struct { char* tempName; char* label; double value; int isDup; } FloatLitEntry;
+     static FloatLitEntry floatLitTable[MAX_FLOAT_LITS];
+     static void collectFloatLiterals(TACInstr* head) { ... }
+     static const char* lookupFloatLabel(const char* tempName) { ... }
+     ```
+     - FPU register allocator ($f4-$f11, indices i map to $f(i+4)):
+     ```c
+     #define NUM_FPU_REGS 8
+     typedef struct { char varName[MAX_VAR_NAME]; int inUse; int lastUsed; } FPURegDesc;
+     static FPURegDesc fpuRegs[NUM_FPU_REGS];
+     static int findFPUReg(const char* varName) { ... return i+4; }
+     static int allocFPUReg(const char* varName) { ... }
+     static void freeFPUReg(int regNum) { ... idx = regNum-4; }
+     ```
+     - Helpers:
+     ```c
+     static int isFloatVar(const char* name) { char* t = getVarType((char*)name); return t && strcmp(t,"float")==0; }
+     static int isFloatTemp(const char* name) { return findFPUReg(name) != -1; }
+     ```
+     - .data section: emits `.float` entries and heap labels
+     - TAC_FLOAT_ASSIGN: `l.s $fN, _flitN`
+     - TAC_ADD/SUB/MUL/DIV float path: `add.s`/`sub.s`/`mul.s`/`div.s` using FPU registers
+     - TAC_ASSIGN float path: `l.s $fN, offset($sp)` and `s.s $fN, offset($sp)`
+     - TAC_PRINT float path: `mov.s $f12, $fN; li $v0, 2; syscall`
+     - All float load/store use `$sp` (not `$fp`)
+     - string_concat built-in: heap allocates, copies s1 and s2 byte-by-byte with labels, updates _heap_ptr; result stored in `allocReg(curr->result)` (fixed from `"__scat_base"`)
+     - string_equal built-in: byte-by-byte comparison loop with labels, returns 1/0
+
+   - **semantic.c**
+     - Added `output_string`, `string_concat`, `string_equal` as built-ins in `initSemantic()`
+
+4. Errors and fixes:
+   - **"stray '\' in program" in scanner.l line 40**: String literal rule `\"([^\\\"]|\\.)*\"` was placed in the C preamble section (before `%%`) instead of in the lex rules section. Fixed by moving it to after the `%%` separator (user/linter applied the fix).
+   
+   - **"undefined reference to makeNode" in ast.c:276**: `makeStringLit` called undefined `makeNode`. This was resolved (presumably `makeNode` was added or the call was replaced with direct `ast_alloc`).
+   
+   - **"Function 'output_string' not declared" semantic error**: Fixed by adding `output_string` as a built-in in `initSemantic()` in semantic.c alongside `print`.
+   
+   - **Syntax error for `string list[2];`**: Parser had no rule for STRING_KW array declaration. Fixed by adding `STRING_KW ID '[' NUM ']' ';'` to the `decl` production in parser.y.
+   
+   - **Syntax error for `int yesOrNo(string s)`**: Parser had no string parameter rule. Fixed by adding `STRING_KW ID { $ = createParam($2); }` to the `param` production.
+   
+   - **string equality always returning 0**: Two identical string literals got different .data labels so `==` (address comparison) always failed. Fixed by deduplicating string literals in `collectStringLiterals` — identical text reuses the same label, so both `"yes"` instances in the program map to the same address.
+   
+   - **string_concat returning wrong value / "Memory address out of bounds"**: `allocReg("__scat_base")` registered the base address under internal name `"__scat_base"` instead of `curr->result`. When subsequent `TAC_ASSIGN c = <temp>` ran, `findVarReg(temp)` returned -1, `c` got garbage. Fixed by changing to `allocReg(curr->result ? curr->result : "__scat_base")` and removing `freeReg(base)` so result stays live.
+   
+   - **Float "Bad address in data/stack read: 0x00000000"**: All float load/store instructions (`l.s`, `s.s`) used `$fp` (frame pointer register $30, uninitialized = 0 in this compiler). The compiler uses `$sp` for all variable access. Fixed by replacing all 7 occurrences of `($fp)` with `($sp)` in float-related codegen code.
+   
+   - **Float printing "5.40000010" instead of "5.4"**: SPIM's syscall 2 (print_float) shows the true IEEE 754 single-precision value. This is the most recently reported bug — a fix (custom `__print_float` subroutine) has been designed but not yet implemented.
+
+5. Problem Solving:
+   - String support was added end-to-end: lexing, parsing, AST, TAC, semantic analysis, code generation
+   - String equality via address comparison works correctly after deduplication
+   - String concatenation uses heap memory (_heap_ptr/_heap_mem) to allocate new strings
+   - Logical operators and/or/not were added using single-char op codes ('&', '|', '!') in the binop AST node, with new TAC opcodes and MIPS instructions
+   - Float support added end-to-end with FPU register allocator ($f4-$f11), type propagation via float temp tracking, and correct use of $sp for stack access
+   - **Ongoing**: Float print formatting — SPIM syscall 2 shows too many decimal places. Custom `__print_float` MIPS subroutine designed to extract integer and fractional parts, build a 6-digit buffer, trim trailing zeros, and print cleanly.
+
+6. All user messages:
+   - "In symtab.h, add TYPE_STRING to the VarType enum."
+   - "In semantic.c, handle STRING_KW in the variable-declaration walk the same way int is mapped to TYPE_INT."
+   - "In tac.c, add a case in generateTAC() for NODE_STRING_LIT that allocates a new temporary and emits: [code snippet with TAC_STRING_ASSIGN, instr->arg1=strdup(node->sval), instr->result=newTemp(), emitTAC(instr)]"
+   - "In codegen.c, handle TAC_STRING_ASSIGN: allocate a label _strN, record it in your string table, emit la $tX, _strN and sw $tX, offset($fp). Before emitting the .text section, loop over the string table and emit .data entries. Handle output_string as a special built-in function call in codegen: load the address into $a0, set $v0 = 4, syscall."
+   - "How do I fix this error: [scanner.l error showing stray '\', missing terminating '"']"
+   - "How do I fix this error: [linker error: undefined reference to makeNode in ast.c:276]"
+   - "How do I fix this error: [semantic error: Function 'output_string' not declared]"
+   - "How do I fix this error: [syntax error at line 2 with string list[2];]"
+   - "Add string_concat and string_equal functions"
+   - "How do I fix this error: [SEMANTIC ERROR line 4: Function 'output_string' not declared]" (after adding to semantic.c)
+   - "How do I make it output 1 instead of 0: [showing string equality always returning 0]"
+   - "Add this to the .data section of codegen.c: _heap_ptr: .word _heap_mem / _heap_mem: .space 4096"
+   - "How do I fix this error: [showing foo1/0/Memory address out of bounds output]"
+   - "Add 'and', 'or', and 'not' operations"
+   - "implement float variables and decimal values"
+   - "How do I fix this error: [Bad address in data/stack read: 0x00000000 with 0.00000000 output]"
+   - "How do I make it print the exact value: [showing float x; x=5.4; print(x); outputting 5.40000010]"
+
+7. Pending Tasks:
+   - **Fix float printing precision**: Implement a custom `__print_float` MIPS subroutine in codegen.c that formats float output cleanly (trims trailing zeros from fractional part), replacing `li $v0, 2; syscall` in the TAC_PRINT float handler with `mov.s $f12, $fN; jal __print_float`. The subroutine design:
+     1. Handle negative sign (negate and print '-')
+     2. Extract and print integer part via `trunc.w.s` + syscall 1
+     3. Compute fractional part × 1000000, round
+     4. Build 6-digit buffer on stack (MSB at $sp+0, LSB at $sp+5)
+     5. Trim trailing '0' chars from $sp+5 backward
+     6. Print '.' then t1 significant digits from $sp+0
+     7. Save/restore $ra around the subroutine to avoid clobbering caller's return address
+
+8. Current Work:
+   Immediately before this summary, the assistant was analyzing the float precision problem: `print(x)` where `x = 5.4` outputs `5.40000010` instead of `5.4`. The root cause is SPIM's `syscall 2` (print_float) which uses a `%.8f`-like format exposing the imprecision of IEEE 754 single-precision float representation of 5.4.
+
+   The assistant had just completed fixing the `$fp` → `$sp` bug (7 occurrences changed) in the previous step. The float compilation now works (no crashes) but the output format is imprecise. The solution designed but not yet implemented is a custom `__print_float` MIPS subroutine emitted into the .text section before `main`:
+
+   ```mips
+   __print_float:
+       addi $sp, $sp, -4
+       sw $ra, 0($sp)
+       mtc1 $zero, $f15
+       c.lt.s $f12, $f15
+       bc1f __pfl_positive
+       neg.s $f12, $f12
+       li $v0, 11; li $a0, 45; syscall   # '-'
+   __pfl_positive:
+       trunc.w.s $f13, $f12
+       mfc1 $a0, $f13; li $v0, 1; syscall
+       cvt.s.w $f13, $f13
+       sub.s $f12, $f12, $f13
+       li $t0, 1000000; mtc1 $t0, $f13; cvt.s.w $f13, $f13
+       mul.s $f12, $f12, $f13
+       li $t0, 0x3F000000; mtc1 $t0, $f13; add.s $f12, $f12, $f13
+       trunc.w.s $f12, $f12; mfc1 $t0, $f12
+       beqz $t0, __pfl_done
+       addi $sp, $sp, -8
+       li $t1, 6; add $t2, $sp, 5
+   __pfl_fill: li $t3,10; div $t0,$t3; mfhi $t4; addi $t4,$t4,48; sb $t4,0($t2); mflo $t0; addi $t2,$t2,-1; addi $t1,$t1,-1; bnez $t1,__pfl_fill
+       add $t2,$sp,5; li $t1,6
+   __pfl_trim: lb $t3,0($t2); bne $t3,48,__pfl_print; addi $t2,$t2,-1; addi $t1,$t1,-1; bnez $t1,__pfl_trim; addi $sp,$sp,8; j __pfl_done
+   __pfl_print: li $v0,11; li $a0,46; syscall; move $t2,$sp
+   __pfl_loop: beqz $t1,__pfl_end; lb $a0,0($t2); li $v0,11; syscall; addi $t2,$t2,1; addi $t1,$t1,-1; j __pfl_loop
+   __pfl_end: addi $sp,$sp,8
+   __pfl_done:
+       lw $ra, 0($sp); addi $sp,$sp,4; jr $ra
+   ```
+
+   The TAC_PRINT float handler would change from `li $v0, 2; syscall` to `jal __print_float`.
+
+9. Optional Next Step:
+   Implement the `__print_float` custom subroutine in codegen.c to fix the float precision printing issue. This directly addresses the user's last request: "How do I make it print the exact value" (showing `5.40000010` output).
+
+   The two code changes needed:
+   1. In `generateMIPSFromTAC`, after `fprintf(output, "    j main\n\n");`, emit the complete `__print_float` MIPS subroutine
+   2. In the `TAC_PRINT` float handler, replace the `mov.s $f12, $fN; li $v0, 2; syscall` block with `mov.s $f12, $fN; jal __print_float` (keeping the newline syscall after)
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: C:\Users\15203\.claude\projects\c--Users-15203-Downloads-CST-405-minimal-CST-405-minimal\e4b8da38-6419-412c-9e08-405ea72f29bf.jsonl
+Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, do not preface with "I'll continue" or similar. Pick up the last task as if the break never happened.
+Show less
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Grep "TAC_PRINT|print_float|__pfl|syscall 2|li \$v0, 2" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+20 lines of output
+Grep "j main|generateMIPS|\.text" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+81 lines of output
+Now I can see where to add the __print_float subroutine and where to update the TAC_PRINT handler. Let me make both changes:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Edit failed
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 661-680)
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Added 76 lines
+Now update the TAC_PRINT float handler to use jal __print_float instead of syscall 2:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 1091-1120)
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Removed 1 line
+The two changes are in place. Now when print(x) is called on a float, the generated code calls __print_float instead of syscall 2. The subroutine:
+
+Handles negative values (prints - and negates)
+Extracts and prints the integer part via syscall 1
+Multiplies fractional part by 1,000,000 and rounds
+Builds a 6-digit buffer on the stack
+Trims trailing '0' characters from the right
+If anything remains, prints . then only the significant digits
+So 5.4 will print as 5.4, 3.14 as 3.14, and 5.0 as just 5 (no decimal point since the fractional part rounds to zero).
+
+
+image.png
+573×879
+How do I print the correct value of 10:
+Let me look at the float addition code generation to understand why 5.4 + 4.6 is giving 10.8:
+
+Grep "TAC_ADD|TAC_SUB|TAC_MUL|TAC_DIV|add\.s|isFloat" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+81 lines of output
+Grep "TAC_ASSIGN.*float|isFloatVar.*result|float.*assign|s\.s|sw.*float|l\.s|lw.*float" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+81 lines of output
+Grep "case TAC_ASSIGN" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+101 lines of output
+Grep "isTACTemp|isConstant" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+41 lines of output
+Let me look at how NODE_VAR is handled in TAC expression generation, since that affects type detection:
+
+Grep "NODE_VAR|generateTACExpr" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c)
+61 lines of output
+Let me read the NODE_BINOP section in tac.c to verify float type propagation:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c (lines 215-294)
+Grep "collectFloatLiterals|floatLitTable|isDup.*float" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+77 lines of output
+Found the root cause. The lookupFloatLabel function matches by tempName, but temps get reused (via freeTemp). So when both 5.4 and 4.6 assignments reuse temp t0, lookupFloatLabel("t0") always returns _flit0 (5.4) — making y = 5.4 instead of 4.6, giving 5.4 + 5.4 = 10.8.
+
+The fix: look up float literals by value, not by temp name.
+
+Grep "TAC_FLOAT_ASSIGN" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+27 lines of output
+The fix is on line 1519: change lookupFloatLabel(curr->result) to look up by value (curr->arg1) instead of by temp name:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Edit failed
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 76-83)
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Added 9 lines
+Now update the TAC_FLOAT_ASSIGN handler to use the new lookup:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 1526-1535)
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Added 1 line
+Two bugs fixed:
+
+Root cause of 10.8: The temp allocator reuses names (e.g. both 5.4 and 4.6 both get temp t0). lookupFloatLabel("t0") always returned the first match — the 5.4 label — so y was loaded with 5.4 instead of 4.6, giving 5.4 + 5.4 = 10.8. Fixed by looking up float literals by value (curr->arg1) instead of by temp name.
+
+The __print_float subroutine (from the previous fix) handles 10.0 correctly: since frac * 1000000 + 0.5 rounds to 0, it branches to __pfl_done and prints just 10 with no decimal point.
+
+
+image.png
+689×882
+c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\test.cm
+How do I fix this error:
+The issue: .float 2 is invalid SPIM syntax — the directive requires a decimal point. %g strips trailing zeros and the decimal point from whole numbers like 2.0 → 2.
+
+Fix the float literal emission in codegen.c:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 659-664)
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 667-672)
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Added 5 lines
+%g strips trailing zeros, so 2.0 becomes 2 — which SPIM rejects as a .float value. The fix checks if the formatted string has a decimal point or exponent, and appends .0 if not, ensuring SPIM always sees a valid float like 2.0.
+
+
+image.png
+565×881
+c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\test.cm
+How do I fix this error:
+The parser has no rule for float array declarations. Need to add FLOAT ID '[' NUM ']' ';' to the decl production in parser.y.
+
+Grep "INT ID '\[' NUM '\]'|STRING_KW ID '\[' NUM '\]'|FLOAT ID ';'" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\parser.y)
+16 lines of output
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\parser.y (lines 200-209)
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\parser.y
+Added 5 lines
+Added the FLOAT ID '[' NUM ']' ';' rule to the decl production. This mirrors the existing int and string array declaration rules.
+
+You'll also want to make sure float array element access and assignment works correctly — the TAC/codegen already handles TAC_ARRAY_ACCESS and TAC_ARRAY_ASSIGN generically, so those should work once the declaration parses.
+
+
+image.png
+600×877
+How do I fix this error:
+Grep "TAC_ARRAY_ASSIGN|TAC_ARRAY_ACCESS" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+123 lines of output
+The TAC_ARRAY_ASSIGN and TAC_ARRAY_ACCESS handlers only use integer registers/sw/lw. For float arrays, they need to use FPU registers and s.s/l.s.
+
+Let me read the load-value section of TAC_ARRAY_ASSIGN and the store section of TAC_ARRAY_ACCESS:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 1430-1469)
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 1500-1539)
+Now I'll replace both handlers with float-aware versions:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Added 16 lines
+Now fix TAC_ARRAY_ACCESS to use l.s for float arrays:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Added 9 lines
+I need to remove markFloatTempInTAC from codegen.c since that's an internal tac.c function — allocFPUReg already handles float temp tracking in codegen:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Removed 1 line
+Two handlers are now float-aware:
+
+TAC_ARRAY_ASSIGN: detects if the value is a float temp (lives in an FPU register) and uses s.s instead of sw to store it into the element address
+TAC_ARRAY_ACCESS: detects if the array is a float array (isFloatVar) and uses l.s into an FPU register instead of lw into a GPR
+The rest (index calculation and address computation) still uses integer registers for both cases, which is correct.
+
+
+image.png
+410×880
+c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\test.cm
+Can you implement global variables:
+Let me understand the current symbol table and code generator structure before designing the global variable support:
+
+Agent:Explore symtab and codegen structure
+IN
+Read these files and report their key structures:
+1. c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\symtab.h - full file
+2. c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\symtab.c - full file
+3. c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c lines 770-830 (TAC_DECL handler) and lines 627-680 (generateMIPSFromTAC start, showing how initSymTab is called)
+4. c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c lines 310-360 (global TAC generation context)
+
+Report the exact struct definitions, function signatures, and the TAC_DECL and TAC_FUNC_BEGIN handlers in codegen.c.
+Let me look at semantic.c to understand how variables are checked:
+
+Grep "isVarDeclared|addVar|NODE_VAR|NODE_DECL|NODE_ASSIGN" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\semantic.c)
+61 lines of output
+You've hit your limit · resets 3pm (America/Phoenix)
