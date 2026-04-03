@@ -3,6 +3,24 @@
 #include <string.h>
 #include <ctype.h>
 #include "tac.h"
+#include "symtab.h"
+
+/* Track which TAC temps hold float values for type propagation */
+#define MAX_FLOAT_TEMPS 500
+static char* floatTempSet[MAX_FLOAT_TEMPS];
+static int floatTempCount = 0;
+
+static int isFloatTempInTAC(const char* name) {
+    if (!name) return 0;
+    for (int i = 0; i < floatTempCount; i++)
+        if (strcmp(floatTempSet[i], name) == 0) return 1;
+    return 0;
+}
+
+static void markFloatTempInTAC(const char* name) {
+    if (name && floatTempCount < MAX_FLOAT_TEMPS)
+        floatTempSet[floatTempCount++] = strdup(name);
+}
 
 typedef struct {
     int eliminated_temps;
@@ -110,6 +128,18 @@ void appendTAC(TACInstr* instr) {
     }
 }
 
+/* Allocate a bare TACInstr with the given opcode (fields zeroed) */
+TACInstr* newTACInstr(TACOp op) {
+    TACInstr* instr = calloc(1, sizeof(TACInstr));
+    instr->op = op;
+    return instr;
+}
+
+/* Append a pre-built TACInstr to the active list (alias for appendTAC) */
+void emitTAC(TACInstr* instr) {
+    appendTAC(instr);
+}
+
 void appendOptimizedTAC(TACInstr* instr) {
     if (!optimizedList.head) {
         optimizedList.head = optimizedList.tail = instr;
@@ -117,6 +147,25 @@ void appendOptimizedTAC(TACInstr* instr) {
         optimizedList.tail->next = instr;
         optimizedList.tail = instr;
     }
+}
+
+#define MAX_BREAK_DEPTH 64
+static char* breakLabelStack[MAX_BREAK_DEPTH];
+static int   breakLabelTop = 0;
+
+static void pushBreakLabel(char* label) {
+    if (breakLabelTop < MAX_BREAK_DEPTH)
+        breakLabelStack[breakLabelTop++] = label;
+    else
+        fprintf(stderr, "TAC Error: break stack overflow\n");
+}
+
+static char* peekBreakLabel() {
+    return (breakLabelTop > 0) ? breakLabelStack[breakLabelTop - 1] : NULL;
+}
+
+static void popBreakLabel() {
+    if (breakLabelTop > 0) breakLabelTop--;
 }
 
 /* Forward declaration */
@@ -147,6 +196,18 @@ char* generateTACExpr(ASTNode* node) {
             return temp;
         }
 
+        case NODE_FLOAT_LIT: {
+            char* temp = allocTemp();
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%g", node->fval);
+            TACInstr* instr = newTACInstr(TAC_FLOAT_ASSIGN);
+            instr->arg1   = strdup(buf);
+            instr->result = strdup(temp);
+            emitTAC(instr);
+            markFloatTempInTAC(temp);
+            return temp;
+        }
+
         case NODE_VAR:
             return strdup(node->data.decl.name);
 
@@ -160,7 +221,21 @@ char* generateTACExpr(ASTNode* node) {
             }
 
             char* temp = allocTemp();
-            char* resultType = "int";
+
+            /* Determine if this is a float operation */
+            int isFloat = 0;
+            if (left) {
+                char* lt = getVarType(left);
+                if ((lt && strcmp(lt, "float") == 0) || isFloatTempInTAC(left))
+                    isFloat = 1;
+            }
+            if (!isFloat && right) {
+                char* rt = getVarType(right);
+                if ((rt && strcmp(rt, "float") == 0) || isFloatTempInTAC(right))
+                    isFloat = 1;
+            }
+            char* resultType = isFloat ? "float" : "int";
+            if (isFloat) markFloatTempInTAC(temp);
 
             /* Select operation type */
             TACOp op;
@@ -176,6 +251,9 @@ char* generateTACExpr(ASTNode* node) {
                 case 'e': op = TAC_EQ; break;  /* == */
                 case 'n': op = TAC_NE; break;  /* != */
                 case 'u': op = TAC_NEG; break; /* unary - */
+                case '&': op = TAC_AND; break; /* and */
+                case '|': op = TAC_OR;  break; /* or */
+                case '!': op = TAC_NOT; break; /* not (unary) */
                 default:  op = TAC_ADD; break;
             }
 
@@ -209,6 +287,14 @@ char* generateTACExpr(ASTNode* node) {
 
             freeTemp(index);
             return temp;
+        }
+
+        case NODE_STRING_LIT: {
+            TACInstr *instr = newTACInstr(TAC_STRING_ASSIGN);
+            instr->arg1   = strdup(node->sval);   /* literal text */
+            instr->result = newTemp();
+            emitTAC(instr);
+            return instr->result;
         }
 
         default:
@@ -313,7 +399,9 @@ static void generateTACStmt(ASTNode* node) {
             freeTemp(cond);
 
             /* Generate body */
+            pushBreakLabel(labelEnd);  /* Allow 'break' to jump to loop end */
             generateTACStmt(node->data.while_stmt.body);
+            popBreakLabel();
 
             /* Jump back to start */
             appendTAC(createTAC(TAC_GOTO, labelStart, NULL, NULL, NULL));
@@ -344,7 +432,9 @@ static void generateTACStmt(ASTNode* node) {
             }
 
             /* Body */
+            pushBreakLabel(labelEnd);  /* Allow 'break' to jump to loop end */
             generateTACStmt(node->data.for_stmt.body);
+            popBreakLabel();
 
             /* Update */
             if (node->data.for_stmt.update) {
@@ -387,6 +477,99 @@ static void generateTACStmt(ASTNode* node) {
                                node->data.array_assign.name, NULL));
             freeTemp(index);
             freeTemp(value);
+            break;
+        }
+
+        case NODE_SWITCH: {
+            char switchVar[32];
+            sprintf(switchVar, "__sw%d", tacList.labelCount);
+            appendTAC(createTAC(TAC_DECL, NULL, NULL, switchVar, "int"));
+
+            char* exprVal = generateTACExpr(node->data.switch_stmt.expr);
+            appendTAC(createTAC(TAC_ASSIGN, exprVal, NULL, switchVar, NULL));
+            freeTemp(exprVal);
+
+            int caseCount = 0;
+            ASTNode* c = node->data.switch_stmt.cases;
+            while (c) { caseCount++; c = c->data.case_clause.next; }
+
+            char** bodyLabels = (char**)malloc(sizeof(char*) * caseCount);
+            ASTNode** caseArr  = (ASTNode**)malloc(sizeof(ASTNode*) * caseCount);
+            int   defaultIdx  = -1;
+
+            c = node->data.switch_stmt.cases;
+            for (int i = 0; i < caseCount; i++) {
+                bodyLabels[i] = newLabel();
+                caseArr[i]    = c;
+                if (c->data.case_clause.isDefault) defaultIdx = i;
+                c = c->data.case_clause.next;
+            }
+
+            char* labelDispatchDone = newLabel();
+            char* labelEnd          = newLabel();
+
+            int* nonDef    = (int*)malloc(sizeof(int) * caseCount);
+            int  nonDefCnt = 0;
+            for (int i = 0; i < caseCount; i++)
+                if (!caseArr[i]->data.case_clause.isDefault)
+                    nonDef[nonDefCnt++] = i;
+
+            for (int ni = 0; ni < nonDefCnt; ni++) {
+                int     i   = nonDef[ni];
+                ASTNode* cas = caseArr[i];
+
+                char caseConst[32];
+                sprintf(caseConst, "%d", cas->data.case_clause.value);
+
+                /* emit TAC_EQ: cmpTemp = switchVar == caseConst */
+                char* cmpTemp = allocTemp();
+                appendTAC(createTAC(TAC_EQ, switchVar, caseConst, cmpTemp, "int"));
+
+                /* Determine fail label: next test or dispatch done */
+                char* failLabel = (ni < nonDefCnt - 1) ? newLabel() : labelDispatchDone;
+
+                /* emit TAC_IF_FALSE: if NOT equal, jump to failLabel */
+                appendTAC(createTAC(TAC_IF_FALSE, cmpTemp, failLabel, NULL, NULL));
+                freeTemp(cmpTemp);
+
+                /* emit TAC_GOTO to bodyLabels[i] (match found) */
+                appendTAC(createTAC(TAC_GOTO, bodyLabels[i], NULL, NULL, NULL));
+
+                /* Emit fail label (used as next case's test entry) */
+                if (ni < nonDefCnt - 1)
+                    appendTAC(createTAC(TAC_LABEL, NULL, NULL, failLabel, NULL));
+            }
+
+            /* No case matched → go to default or end */
+            appendTAC(createTAC(TAC_LABEL, NULL, NULL, labelDispatchDone, NULL));
+            if (defaultIdx >= 0)
+                appendTAC(createTAC(TAC_GOTO, bodyLabels[defaultIdx], NULL, NULL, NULL));
+            else
+                appendTAC(createTAC(TAC_GOTO, labelEnd, NULL, NULL, NULL));
+
+            pushBreakLabel(labelEnd);
+            for (int i = 0; i < caseCount; i++) {
+                appendTAC(createTAC(TAC_LABEL, NULL, NULL, bodyLabels[i], NULL));
+                if (caseArr[i]->data.case_clause.body)
+                    generateTACStmt(caseArr[i]->data.case_clause.body);
+            }
+            popBreakLabel();
+
+            appendTAC(createTAC(TAC_LABEL, NULL, NULL, labelEnd, NULL));
+
+            free(bodyLabels);
+            free(caseArr);
+            free(nonDef);
+            break;
+        }
+
+        case NODE_BREAK: {
+            char* target = peekBreakLabel();
+            if (target) {
+                appendTAC(createTAC(TAC_GOTO, target, NULL, NULL, NULL));
+            } else {
+                fprintf(stderr, "TAC Error: break without enclosing context\n");
+            }
             break;
         }
 
@@ -459,6 +642,9 @@ static const char* getOpName(TACOp op) {
         case TAC_GE: return ">=";
         case TAC_EQ: return "==";
         case TAC_NE: return "!=";
+        case TAC_AND: return "and";
+        case TAC_OR:  return "or";
+        case TAC_NOT: return "not";
         default: return "?";
     }
 }
@@ -493,11 +679,16 @@ void printTAC() {
             case TAC_GE:
             case TAC_EQ:
             case TAC_NE:
+            case TAC_AND:
+            case TAC_OR:
                 printf("%s = %s %s %s\n", curr->result, curr->arg1,
                        getOpName(curr->op), curr->arg2);
                 break;
             case TAC_NEG:
                 printf("%s = -%s\n", curr->result, curr->arg1);
+                break;
+            case TAC_NOT:
+                printf("%s = not %s\n", curr->result, curr->arg1);
                 break;
             case TAC_ASSIGN:
                 printf("%s = %s\n", curr->result, curr->arg1);
@@ -539,6 +730,9 @@ void printTAC() {
             case TAC_ARRAY_ACCESS:
                 printf("%s = %s[%s]\n", curr->result, curr->arg1, curr->arg2);
                 break;
+            case TAC_FLOAT_ASSIGN:
+                printf("%s = (float)%s\n", curr->result, curr->arg1);
+                break;
             default:
                 printf("UNKNOWN\n");
                 break;
@@ -563,6 +757,16 @@ static int isConstantNumber(const char* str) {
 
 static int isConstant(const char* str) {
     return isConstantNumber(str);
+}
+
+/* Helper: Check if varName is referenced in any instruction after 'start' */
+static int isUsedAfter(TACInstr* start, const char* varName) {
+    for (TACInstr* p = start; p; p = p->next) {
+        if (p->arg1   && strcmp(p->arg1,   varName) == 0) return 1;
+        if (p->arg2   && strcmp(p->arg2,   varName) == 0) return 1;
+        if (p->result && strcmp(p->result, varName) == 0) return 1;
+    }
+    return 0;
 }
 
 /* Helper: Perform constant folding on binary operation */
@@ -631,9 +835,11 @@ void optimizeTAC() {
                 third->arg1 = strdup(buffer);
                 third->arg2 = NULL;
 
-                // Remove redundant instructions
-                current->op = TAC_NOP;  // Mark for removal
-                current->next->op = TAC_NOP;
+                // Only eliminate if the variables aren't used after this fold
+                if (!isUsedAfter(third->next, current->result))
+                    current->op = TAC_NOP;
+                if (!isUsedAfter(third->next, current->next->result))
+                    current->next->op = TAC_NOP;
 
                 opt_stats.constant_folded++;
             }
@@ -701,11 +907,16 @@ void printOptimizedTAC() {
             case TAC_GE:
             case TAC_EQ:
             case TAC_NE:
+            case TAC_AND:
+            case TAC_OR:
                 printf("%s = %s %s %s\n", curr->result, curr->arg1,
                        getOpName(curr->op), curr->arg2);
                 break;
             case TAC_NEG:
                 printf("%s = -%s\n", curr->result, curr->arg1);
+                break;
+            case TAC_NOT:
+                printf("%s = not %s\n", curr->result, curr->arg1);
                 break;
             case TAC_ASSIGN:
                 printf("%s = %s\n", curr->result, curr->arg1);
@@ -797,11 +1008,16 @@ void saveTACToFile(const char* filename) {
             case TAC_GE:
             case TAC_EQ:
             case TAC_NE:
+            case TAC_AND:
+            case TAC_OR:
                 fprintf(file, "%s = %s %s %s\n", curr->result, curr->arg1,
                        getOpName(curr->op), curr->arg2);
                 break;
             case TAC_NEG:
                 fprintf(file, "%s = -%s\n", curr->result, curr->arg1);
+                break;
+            case TAC_NOT:
+                fprintf(file, "%s = not %s\n", curr->result, curr->arg1);
                 break;
             case TAC_ASSIGN:
                 fprintf(file, "%s = %s\n", curr->result, curr->arg1);
@@ -842,6 +1058,9 @@ void saveTACToFile(const char* filename) {
                 break;
             case TAC_ARRAY_ACCESS:
                 fprintf(file, "%s = %s[%s]\n", curr->result, curr->arg1, curr->arg2);
+                break;
+            case TAC_FLOAT_ASSIGN:
+                fprintf(file, "%s = (float)%s\n", curr->result, curr->arg1);
                 break;
             default:
                 fprintf(file, "UNKNOWN\n");
@@ -892,11 +1111,16 @@ void saveOptimizedTACToFile(const char* filename) {
             case TAC_GE:
             case TAC_EQ:
             case TAC_NE:
+            case TAC_AND:
+            case TAC_OR:
                 fprintf(file, "%s = %s %s %s\n", curr->result, curr->arg1,
                        getOpName(curr->op), curr->arg2);
                 break;
             case TAC_NEG:
                 fprintf(file, "%s = -%s\n", curr->result, curr->arg1);
+                break;
+            case TAC_NOT:
+                fprintf(file, "%s = not %s\n", curr->result, curr->arg1);
                 break;
             case TAC_ASSIGN:
                 fprintf(file, "%s = %s\n", curr->result, curr->arg1);
@@ -937,6 +1161,9 @@ void saveOptimizedTACToFile(const char* filename) {
                 break;
             case TAC_ARRAY_ACCESS:
                 fprintf(file, "%s = %s[%s]\n", curr->result, curr->arg1, curr->arg2);
+                break;
+            case TAC_FLOAT_ASSIGN:
+                fprintf(file, "%s = (float)%s\n", curr->result, curr->arg1);
                 break;
             default:
                 fprintf(file, "UNKNOWN\n");
