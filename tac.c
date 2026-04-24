@@ -5,21 +5,24 @@
 #include "tac.h"
 #include "symtab.h"
 
-/* Track which TAC temps hold float values for type propagation */
-#define MAX_FLOAT_TEMPS 500
-static char* floatTempSet[MAX_FLOAT_TEMPS];
-static int floatTempCount = 0;
+/* Track which TAC temps hold float values for type propagation.
+ * Use a per-index flag array so the mark can be cleared when a temp
+ * is freed and reused — prevents stale float marks from polluting
+ * the type of a later integer operation that reuses the same temp name. */
+static int floatTempMark[MAX_TEMPS];  /* 1 = currently a float temp */
 
 static int isFloatTempInTAC(const char* name) {
-    if (!name) return 0;
-    for (int i = 0; i < floatTempCount; i++)
-        if (strcmp(floatTempSet[i], name) == 0) return 1;
-    return 0;
+    if (!name || name[0] != 't' || name[1] < '0' || name[1] > '9') return 0;
+    int n = atoi(name + 1);
+    if (n < 0 || n >= MAX_TEMPS) return 0;
+    return floatTempMark[n];
 }
 
 static void markFloatTempInTAC(const char* name) {
-    if (name && floatTempCount < MAX_FLOAT_TEMPS)
-        floatTempSet[floatTempCount++] = strdup(name);
+    if (!name || name[0] != 't') return;
+    int n = atoi(name + 1);
+    if (n >= 0 && n < MAX_TEMPS)
+        floatTempMark[n] = 1;
 }
 
 typedef struct {
@@ -45,6 +48,7 @@ void initTAC() {
     /* Initialize temporary allocator */
     for (int i = 0; i < MAX_TEMPS; i++) {
         tempAlloc.allocated[i] = 0;
+        floatTempMark[i] = 0;
     }
     tempAlloc.maxUsed = 0;
     tempAlloc.freeCount = 0;
@@ -85,6 +89,7 @@ void freeTemp(char* temp) {
     if (!tempAlloc.allocated[tempNum]) return;
 
     tempAlloc.allocated[tempNum] = 0;
+    floatTempMark[tempNum] = 0;  /* clear float mark so reuse as int isn't mistyped */
     if (tempAlloc.freeCount < MAX_TEMPS) {
         tempAlloc.freeList[tempAlloc.freeCount++] = tempNum;
         printf("    [TAC FREE] Released temporary %s\n", temp);
@@ -191,6 +196,20 @@ char* generateTACExpr(ASTNode* node) {
 
     switch(node->type) {
         case NODE_NUM: {
+            char* temp = malloc(20);
+            sprintf(temp, "%d", node->data.num);
+            return temp;
+        }
+
+        case NODE_CHAR_LIT: {
+            /* Char literals are just integer (ASCII) constants */
+            char* temp = malloc(20);
+            sprintf(temp, "%d", node->data.num);
+            return temp;
+        }
+
+        case NODE_BOOL_LIT: {
+            /* Boolean literals: true=1, false=0 */
             char* temp = malloc(20);
             sprintf(temp, "%d", node->data.num);
             return temp;
