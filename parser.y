@@ -33,10 +33,11 @@ ASTNode* root = NULL;
 %token <fval> FLOAT_LIT
 %token <str> ID
 %token <sval> STRING_LITERAL
-%token INT STRING_KW FLOAT PRINT RETURN IF ELSE WHILE FOR
+%token INT STRING_KW FLOAT CHAR_KW BOOLEAN_KW VOID_KW PRINT RETURN IF ELSE WHILE FOR
 %token SWITCH CASE BREAK DEFAULT
 %token LE GE EQ NE
 %token AND_KW OR_KW NOT_KW
+%token <num> CHAR_LIT TRUE_LIT FALSE_LIT
 
 /* NON-TERMINAL TYPES */
 %type <node> program decl_or_func_list decl_or_func
@@ -75,10 +76,11 @@ decl_or_func_list:
     }
     ;
 
-/* Can be either a function definition or a variable declaration */
+/* Can be a function definition, variable declaration, or global assignment */
 decl_or_func:
     func_def { $$ = $1; }
     | decl { $$ = $1; }
+    | assign { $$ = $1; }
     ;
 
 /* FUNCTION DEFINITION - int name(params) { body } */
@@ -115,6 +117,30 @@ func_def:
         $$ = createFuncDef($2, NULL, $7);
         free($2);
     }
+    | VOID_KW ID '(' params ')' block {
+        $$ = createFuncDef($2, $4, $6);
+        free($2);
+    }
+    | VOID_KW ID '(' ')' block {
+        $$ = createFuncDef($2, NULL, $5);
+        free($2);
+    }
+    | BOOLEAN_KW ID '(' params ')' block {
+        $$ = createFuncDef($2, $4, $6);
+        free($2);
+    }
+    | BOOLEAN_KW ID '(' ')' block {
+        $$ = createFuncDef($2, NULL, $5);
+        free($2);
+    }
+    | CHAR_KW ID '(' params ')' block {
+        $$ = createFuncDef($2, $4, $6);
+        free($2);
+    }
+    | CHAR_KW ID '(' ')' block {
+        $$ = createFuncDef($2, NULL, $5);
+        free($2);
+    }
     ;
 
 /* PARAMETERS */
@@ -149,6 +175,14 @@ param:
         free($2);
     }
     | STRING_KW ID '[' ']' {
+        $$ = createParam($2);
+        free($2);
+    }
+    | CHAR_KW ID {
+        $$ = createParam($2);
+        free($2);
+    }
+    | BOOLEAN_KW ID {
         $$ = createParam($2);
         free($2);
     }
@@ -219,6 +253,16 @@ decl:
     | STRING_KW ID '[' NUM ']' ';' {
         $$ = createArrayDecl($2, "string", $4);
         addArrayVar($2, "string", $4);
+        free($2);
+    }
+    | CHAR_KW ID ';' {
+        $$ = createDecl($2, "char");
+        addVar($2, "char");
+        free($2);
+    }
+    | BOOLEAN_KW ID ';' {
+        $$ = createDecl($2, "boolean");
+        addVar($2, "boolean");
         free($2);
     }
     ;
@@ -351,6 +395,15 @@ break_stmt:
 expr:
     NUM {
         $$ = createNum($1);
+    }
+    | CHAR_LIT {
+        $$ = makeCharLit($1);
+    }
+    | TRUE_LIT {
+        $$ = makeBoolLit(1);
+    }
+    | FALSE_LIT {
+        $$ = makeBoolLit(0);
     }
     | STRING_LITERAL {
         $$ = makeStringLit($1);
