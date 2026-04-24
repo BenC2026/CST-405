@@ -1,0 +1,554 @@
+Unoptimized Three-Address Code (TAC)
+=====================================
+Intermediate representation with functions
+
+  1: DECL gCount
+  2: DECL gTotal
+  3: ARRAY_DECL gScores[5]
+  4: FUNC_BEGIN main
+  5: DECL a
+  6: DECL b
+  7: DECL c
+  8: a = 42
+  9: b = 8
+ 10: t0 = a - b
+ 11: c = t0
+ 12: PRINT a
+ 13: PRINT b
+ 14: PRINT c
+ 15: DECL x
+ 16: DECL y
+ 17: DECL z
+ 18: t0 = (float)3.14
+ 19: x = t0
+ 20: t0 = (float)2
+ 21: y = t0
+ 22: t0 = x * y
+ 23: z = t0
+ 24: PRINT x
+ 25: PRINT y
+ 26: PRINT z
+ 27: DECL flag
+ 28: DECL done
+ 29: flag = 1
+ 30: done = 0
+ 31: PRINT flag
+ 32: PRINT done
+ 33: DECL grade
+ 34: DECL init
+ 35: grade = 65
+ 36: init = 90
+ 37: PRINT grade
+ 38: PRINT init
+ 39: DECL name
+ 40: DECL msg
+ 41: UNKNOWN
+ 42: name = t0
+ 43: UNKNOWN
+ 44: msg = t1
+ 45: ARG name
+ 46: t0 = CALL output_string, 1
+ 47: ARG msg
+ 48: t1 = CALL output_string, 1
+ 49: ARRAY_DECL nums[6]
+ 50: ARRAY_ASSIGN nums[0] = 10
+ 51: ARRAY_ASSIGN nums[1] = 20
+ 52: ARRAY_ASSIGN nums[2] = 30
+ 53: ARRAY_ASSIGN nums[3] = 40
+ 54: ARRAY_ASSIGN nums[4] = 50
+ 55: ARRAY_ASSIGN nums[5] = 60
+ 56: t2 = nums[0]
+ 57: PRINT t2
+ 58: t2 = nums[3]
+ 59: PRINT t2
+ 60: t2 = nums[5]
+ 61: PRINT t2
+ 62: ARRAY_DECL fArr[3]
+ 63: t2 = (float)1.1
+ 64: ARRAY_ASSIGN fArr[0] = t2
+ 65: t2 = (float)2.2
+ 66: ARRAY_ASSIGN fArr[1] = t2
+ 67: t2 = (float)3.3
+ 68: ARRAY_ASSIGN fArr[2] = t2
+ 69: t2 = fArr[0]
+ 70: PRINT t2
+ 71: t2 = fArr[2]
+ 72: PRINT t2
+ 73: t2 = CALL greet, 0
+ 74: DECL magic
+ 75: t3 = CALL getAnswer, 0
+ 76: magic = t3
+ 77: PRINT magic
+ 78: DECL sq
+ 79: ARG 7
+ 80: t3 = CALL square, 1
+ 81: sq = t3
+ 82: PRINT sq
+ 83: DECL avg
+ 84: ARG 10
+ 85: ARG 3
+ 86: t3 = CALL average, 2
+ 87: avg = t3
+ 88: PRINT avg
+ 89: gCount = 0
+ 90: t3 = CALL increment, 0
+ 91: t4 = CALL increment, 0
+ 92: t5 = CALL increment, 0
+ 93: PRINT gCount
+ 94: DECL fact
+ 95: ARG 5
+ 96: t6 = CALL factorial, 1
+ 97: fact = t6
+ 98: PRINT fact
+ 99: ARRAY_DECL arr[5]
+100: DECL s
+101: ARRAY_ASSIGN arr[0] = 1
+102: ARRAY_ASSIGN arr[1] = 2
+103: ARRAY_ASSIGN arr[2] = 3
+104: ARRAY_ASSIGN arr[3] = 4
+105: ARRAY_ASSIGN arr[4] = 5
+106: ARG arr
+107: ARG 5
+108: t6 = CALL sumArray, 2
+109: s = t6
+110: PRINT s
+111: DECL even
+112: ARG 4
+113: t6 = CALL isEven, 1
+114: even = t6
+115: PRINT even
+116: ARG 7
+117: t6 = CALL isEven, 1
+118: even = t6
+119: PRINT even
+120: DECL i
+121: DECL total
+122: i = 1
+123: total = 0
+124: L0:
+125: t6 = i <= 10
+126: IF_FALSE t6 GOTO L1
+127: t6 = total + i
+128: total = t6
+129: t6 = i + 1
+130: i = t6
+131: GOTO L0
+132: L1:
+133: PRINT total
+134: DECL j
+135: DECL fsum
+136: fsum = 0
+137: j = 1
+138: L2:
+139: t6 = j <= 5
+140: IF_FALSE t6 GOTO L3
+141: t6 = fsum + j
+142: fsum = t6
+143: t6 = j + 1
+144: j = t6
+145: GOTO L2
+146: L3:
+147: PRINT fsum
+148: ARRAY_DECL data[5]
+149: j = 0
+150: L4:
+151: t6 = j < 5
+152: IF_FALSE t6 GOTO L5
+153: t6 = j * j
+154: ARRAY_ASSIGN data[j] = t6
+155: t6 = j + 1
+156: j = t6
+157: GOTO L4
+158: L5:
+159: j = 0
+160: L6:
+161: t6 = j < 5
+162: IF_FALSE t6 GOTO L7
+163: t6 = data[j]
+164: PRINT t6
+165: t6 = j + 1
+166: j = t6
+167: GOTO L6
+168: L7:
+169: DECL row
+170: DECL col
+171: DECL product
+172: row = 1
+173: L8:
+174: t6 = row <= 2
+175: IF_FALSE t6 GOTO L9
+176: col = 1
+177: L10:
+178: t6 = col <= 3
+179: IF_FALSE t6 GOTO L11
+180: t6 = row * col
+181: product = t6
+182: PRINT product
+183: t6 = col + 1
+184: col = t6
+185: GOTO L10
+186: L11:
+187: t6 = row + 1
+188: row = t6
+189: GOTO L8
+190: L9:
+191: DECL k
+192: DECL acc
+193: j = 1
+194: L12:
+195: t6 = j <= 3
+196: IF_FALSE t6 GOTO L13
+197: k = 0
+198: acc = 0
+199: L14:
+200: t6 = k < j
+201: IF_FALSE t6 GOTO L15
+202: t6 = acc + 1
+203: acc = t6
+204: t6 = k + 1
+205: k = t6
+206: GOTO L14
+207: L15:
+208: PRINT acc
+209: t6 = j + 1
+210: j = t6
+211: GOTO L12
+212: L13:
+213: DECL val
+214: val = 10
+215: t6 = val > 5
+216: IF_FALSE t6 GOTO L17
+217: PRINT 100
+218: L17:
+219: val = 3
+220: t6 = val > 5
+221: IF_FALSE t6 GOTO L18
+222: PRINT 200
+223: GOTO L19
+224: L18:
+225: PRINT 201
+226: L19:
+227: val = 75
+228: t6 = val >= 90
+229: IF_FALSE t6 GOTO L20
+230: PRINT 300
+231: GOTO L21
+232: L20:
+233: t6 = val >= 80
+234: IF_FALSE t6 GOTO L22
+235: PRINT 301
+236: GOTO L23
+237: L22:
+238: t6 = val >= 70
+239: IF_FALSE t6 GOTO L24
+240: PRINT 302
+241: GOTO L25
+242: L24:
+243: PRINT 303
+244: L25:
+245: L23:
+246: L21:
+247: DECL p
+248: DECL q
+249: p = 5
+250: q = 10
+251: t6 = p < q
+252: IF_FALSE t6 GOTO L26
+253: t6 = p > 0
+254: IF_FALSE t6 GOTO L28
+255: PRINT 400
+256: GOTO L29
+257: L28:
+258: PRINT 401
+259: L29:
+260: GOTO L27
+261: L26:
+262: PRINT 402
+263: L27:
+264: DECL day
+265: day = 3
+266: DECL __sw30
+267: __sw30 = day
+268: t6 = __sw30 == 1
+269: IF_FALSE t6 GOTO L36
+270: GOTO L30
+271: L36:
+272: t6 = __sw30 == 2
+273: IF_FALSE t6 GOTO L37
+274: GOTO L31
+275: L37:
+276: t6 = __sw30 == 3
+277: IF_FALSE t6 GOTO L34
+278: GOTO L32
+279: L34:
+280: GOTO L33
+281: L30:
+282: PRINT 501
+283: GOTO L35
+284: L31:
+285: PRINT 502
+286: GOTO L35
+287: L32:
+288: PRINT 503
+289: GOTO L35
+290: L33:
+291: PRINT 500
+292: GOTO L35
+293: L35:
+294: DECL season
+295: season = 2
+296: DECL __sw38
+297: __sw38 = season
+298: t6 = __sw38 == 1
+299: IF_FALSE t6 GOTO L45
+300: GOTO L38
+301: L45:
+302: t6 = __sw38 == 2
+303: IF_FALSE t6 GOTO L46
+304: GOTO L39
+305: L46:
+306: t6 = __sw38 == 3
+307: IF_FALSE t6 GOTO L47
+308: GOTO L40
+309: L47:
+310: t6 = __sw38 == 4
+311: IF_FALSE t6 GOTO L43
+312: GOTO L41
+313: L43:
+314: GOTO L42
+315: L38:
+316: L39:
+317: L40:
+318: PRINT 510
+319: GOTO L44
+320: L41:
+321: PRINT 511
+322: GOTO L44
+323: L42:
+324: PRINT 512
+325: GOTO L44
+326: L44:
+327: DECL code
+328: code = 99
+329: DECL __sw48
+330: __sw48 = code
+331: t6 = __sw48 == 1
+332: IF_FALSE t6 GOTO L53
+333: GOTO L48
+334: L53:
+335: t6 = __sw48 == 2
+336: IF_FALSE t6 GOTO L51
+337: GOTO L49
+338: L51:
+339: GOTO L50
+340: L48:
+341: PRINT 520
+342: GOTO L52
+343: L49:
+344: PRINT 521
+345: GOTO L52
+346: L50:
+347: PRINT 522
+348: GOTO L52
+349: L52:
+350: DECL outer
+351: DECL inner
+352: outer = 2
+353: inner = 1
+354: DECL __sw54
+355: __sw54 = outer
+356: t6 = __sw54 == 1
+357: IF_FALSE t6 GOTO L59
+358: GOTO L54
+359: L59:
+360: t6 = __sw54 == 2
+361: IF_FALSE t6 GOTO L57
+362: GOTO L55
+363: L57:
+364: GOTO L56
+365: L54:
+366: DECL __sw60
+367: __sw60 = inner
+368: t6 = __sw60 == 1
+369: IF_FALSE t6 GOTO L62
+370: GOTO L60
+371: L62:
+372: GOTO L61
+373: L60:
+374: PRINT 531
+375: GOTO L63
+376: L61:
+377: PRINT 530
+378: GOTO L63
+379: L63:
+380: GOTO L58
+381: L55:
+382: DECL __sw64
+383: __sw64 = inner
+384: t6 = __sw64 == 1
+385: IF_FALSE t6 GOTO L66
+386: GOTO L64
+387: L66:
+388: GOTO L65
+389: L64:
+390: PRINT 532
+391: GOTO L67
+392: L65:
+393: PRINT 530
+394: GOTO L67
+395: L67:
+396: GOTO L58
+397: L56:
+398: PRINT 530
+399: GOTO L58
+400: L58:
+401: DECL fibA
+402: DECL fibB
+403: DECL fibNext
+404: DECL n
+405: fibA = 0
+406: fibB = 1
+407: PRINT fibA
+408: PRINT fibB
+409: n = 2
+410: L68:
+411: t6 = n < 7
+412: IF_FALSE t6 GOTO L69
+413: t6 = fibA + fibB
+414: fibNext = t6
+415: PRINT fibNext
+416: fibA = fibB
+417: fibB = fibNext
+418: t6 = n + 1
+419: n = t6
+420: GOTO L68
+421: L69:
+422: DECL fibR
+423: ARG 6
+424: t6 = CALL fib, 1
+425: fibR = t6
+426: PRINT fibR
+427: DECL perf
+428: t6 = 2 * 3
+429: t0 = 4 * 5
+430: t7 = t6 + t0
+431: t0 = t7 - 1
+432: perf = t0
+433: PRINT perf
+434: DECL limit
+435: DECL lcount
+436: limit = 100
+437: lcount = 0
+438: i = 0
+439: L70:
+440: t0 = i < limit
+441: IF_FALSE t0 GOTO L71
+442: t0 = lcount + 1
+443: lcount = t0
+444: t0 = i + 1
+445: i = t0
+446: GOTO L70
+447: L71:
+448: PRINT lcount
+449: DECL dc
+450: dc = 1
+451: t0 = dc == 1
+452: IF_FALSE t0 GOTO L72
+453: PRINT 601
+454: GOTO L73
+455: L72:
+456: PRINT 602
+457: L73:
+458: RETURN 0
+459: FUNC_END main
+460: FUNC_BEGIN greet
+461: PRINT 999
+462: FUNC_END greet
+463: FUNC_BEGIN getAnswer
+464: RETURN 42
+465: FUNC_END getAnswer
+466: FUNC_BEGIN square
+467: PARAM n
+468: DECL result
+469: t0 = n * n
+470: result = t0
+471: RETURN result
+472: FUNC_END square
+473: FUNC_BEGIN average
+474: PARAM numerator
+475: PARAM denominator
+476: DECL r
+477: t0 = numerator / denominator
+478: r = t0
+479: RETURN r
+480: FUNC_END average
+481: FUNC_BEGIN increment
+482: t0 = gCount + 1
+483: gCount = t0
+484: FUNC_END increment
+485: FUNC_BEGIN factorial
+486: PARAM n
+487: t0 = n <= 1
+488: IF_FALSE t0 GOTO L75
+489: RETURN 1
+490: L75:
+491: DECL sub
+492: t0 = n - 1
+493: sub = t0
+494: ARG sub
+495: t0 = CALL factorial, 1
+496: t7 = n * t0
+497: RETURN t7
+498: FUNC_END factorial
+499: FUNC_BEGIN sumArray
+500: PARAM arr
+501: PARAM size
+502: DECL total
+503: DECL idx
+504: total = 0
+505: idx = 0
+506: L76:
+507: t7 = idx < size
+508: IF_FALSE t7 GOTO L77
+509: t7 = arr[idx]
+510: t0 = total + t7
+511: total = t0
+512: t7 = idx + 1
+513: idx = t7
+514: GOTO L76
+515: L77:
+516: RETURN total
+517: FUNC_END sumArray
+518: FUNC_BEGIN isEven
+519: PARAM n
+520: t7 = n / 2
+521: t0 = t7 * 2
+522: t7 = n == t0
+523: IF_FALSE t7 GOTO L79
+524: RETURN 1
+525: L79:
+526: RETURN 0
+527: FUNC_END isEven
+528: FUNC_BEGIN fib
+529: PARAM n
+530: t7 = n <= 0
+531: IF_FALSE t7 GOTO L81
+532: RETURN 0
+533: L81:
+534: t7 = n == 1
+535: IF_FALSE t7 GOTO L83
+536: RETURN 1
+537: L83:
+538: DECL a
+539: DECL b
+540: t7 = n - 1
+541: a = t7
+542: t7 = n - 2
+543: b = t7
+544: ARG a
+545: t7 = CALL fib, 1
+546: ARG b
+547: t0 = CALL fib, 1
+548: t6 = t7 + t0
+549: RETURN t6
+550: FUNC_END fib
