@@ -25,7 +25,7 @@ int condReg = 0;  // Register used for condition evaluations
 RegisterAllocator regAlloc;
 static int argIndex = 0;    // Track argument position for multi-arg calls
 static int paramIndex = 0;  // Track parameter position for multi-param functions
-#define ARG_AREA_OFFSET 300  // Arguments stored at offsets 300+ in caller's frame
+#define ARG_AREA_OFFSET 600  // Arguments stored at offsets 600+ in caller's frame
 
 /* FLOAT LITERAL TABLE
  * Collected in a pre-pass so .data float entries can be emitted before .text.
@@ -88,6 +88,145 @@ static const char* lookupFloatLabelByValue(const char* valStr) {
     return "_flit_unknown";
 }
 
+/* GLOBAL VARIABLE TABLE
+ * Collected in a pre-pass so globals can be emitted in .data and
+ * all load/store operations use label-based addressing instead of $sp offsets.
+ */
+#define MAX_GLOBAL_VARS 200
+typedef struct {
+    char name[MAX_VAR_NAME];
+    char type[16];
+    int  isArray;
+    int  arraySize;
+} GlobalVarEntry;
+static GlobalVarEntry globalVarTable[MAX_GLOBAL_VARS];
+static int numGlobalVars = 0;
+
+static void collectGlobalVars(TACInstr* head) {
+    numGlobalVars = 0;
+    /* Walk TAC until the first function definition — those are global scope */
+    for (TACInstr* c = head; c && c->op != TAC_FUNC_BEGIN; c = c->next) {
+        if ((c->op == TAC_DECL || c->op == TAC_ARRAY_DECL) && numGlobalVars < MAX_GLOBAL_VARS) {
+            strncpy(globalVarTable[numGlobalVars].name, c->result, MAX_VAR_NAME - 1);
+            strncpy(globalVarTable[numGlobalVars].type, c->type ? c->type : "int", 15);
+            globalVarTable[numGlobalVars].isArray   = (c->op == TAC_ARRAY_DECL);
+            globalVarTable[numGlobalVars].arraySize = (c->op == TAC_ARRAY_DECL && c->arg1) ? atoi(c->arg1) : 0;
+            numGlobalVars++;
+        }
+    }
+}
+
+static int isGlobalVarCG(const char* name) {
+    if (!name) return 0;
+    for (int i = 0; i < numGlobalVars; i++)
+        if (strcmp(globalVarTable[i].name, name) == 0) return 1;
+    return 0;
+}
+
+static char* getGlobalVarTypeCG(const char* name) {
+    for (int i = 0; i < numGlobalVars; i++)
+        if (strcmp(globalVarTable[i].name, name) == 0) return globalVarTable[i].type;
+    return NULL;
+}
+
+static int isGlobalFloatVar(const char* name) {
+    char* t = getGlobalVarTypeCG(name);
+    return t && strcmp(t, "float") == 0;
+}
+
+/* ── Float-returning function table ──────────────────────────────────────
+ * Populated by buildFloatFuncTable() before the main emission loop.
+ * Used by TAC_CALL to read $f0 instead of $v0, and by TAC_RETURN to
+ * write $f0 instead of $v0.
+ */
+#define MAX_FLOAT_FUNCS 64
+static char floatReturnFuncs[MAX_FLOAT_FUNCS][64];
+static int  numFloatReturnFuncs = 0;
+
+static void buildFloatFuncTable(TACList* tac) {
+    numFloatReturnFuncs = 0;
+    char curFunc[64] = "";
+    char floatVars[200][32];
+    int  numFloatVars = 0;
+
+    for (TACInstr* c = tac->head; c; c = c->next) {
+        if (c->op == TAC_FUNC_BEGIN) {
+            strncpy(curFunc, c->result, 63);
+            numFloatVars = 0;
+        } else if (c->op == TAC_DECL && c->type && strcmp(c->type, "float") == 0) {
+            if (numFloatVars < 200) strncpy(floatVars[numFloatVars++], c->result, 31);
+        } else if (c->op == TAC_FLOAT_ASSIGN) {
+            /* float-literal temp */
+            if (numFloatVars < 200 && c->result)
+                strncpy(floatVars[numFloatVars++], c->result, 31);
+        } else if (c->op == TAC_RETURN && c->arg1 && curFunc[0]) {
+            for (int i = 0; i < numFloatVars; i++) {
+                if (strcmp(floatVars[i], c->arg1) == 0) {
+                    /* avoid duplicates */
+                    int dup = 0;
+                    for (int j = 0; j < numFloatReturnFuncs; j++)
+                        if (strcmp(floatReturnFuncs[j], curFunc) == 0) { dup = 1; break; }
+                    if (!dup && numFloatReturnFuncs < MAX_FLOAT_FUNCS)
+                        strncpy(floatReturnFuncs[numFloatReturnFuncs++], curFunc, 63);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+static int funcReturnsFloat(const char* name) {
+    for (int i = 0; i < numFloatReturnFuncs; i++)
+        if (strcmp(floatReturnFuncs[i], name) == 0) return 1;
+    return 0;
+}
+
+/* Global-aware load/store helpers
+ * For globals:  lw $tR, varname  /  sw $tR, varname
+ * For locals:   lw $tR, off($sp) /  sw $tR, off($sp)
+ * For float globals: la $t8, varname; l.s/$f.s  $fR, 0($t8)
+ * For float locals:  l.s $fR, off($sp)
+ */
+static void emitIntLoad(const char* varname, int reg) {
+    if (isGlobalVarCG(varname)) {
+        fprintf(output, "    la $t8, %s\n", varname);
+        fprintf(output, "    lw $t%d, 0($t8)     # load global '%s'\n", reg, varname);
+    } else {
+        int off = getVarOffset((char*)varname);
+        fprintf(output, "    lw $t%d, %d($sp)     # load '%s'\n", reg, off, varname);
+    }
+}
+
+static void emitIntStore(const char* varname, int reg) {
+    if (isGlobalVarCG(varname)) {
+        fprintf(output, "    la $t8, %s\n", varname);
+        fprintf(output, "    sw $t%d, 0($t8)     # store global '%s'\n", reg, varname);
+    } else {
+        int off = getVarOffset((char*)varname);
+        fprintf(output, "    sw $t%d, %d($sp)     # store '%s'\n", reg, off, varname);
+    }
+}
+
+static void emitFloatLoad(const char* varname, int freg) {
+    if (isGlobalVarCG(varname)) {
+        fprintf(output, "    la $t8, %s\n", varname);
+        fprintf(output, "    l.s $f%d, 0($t8)     # load global float '%s'\n", freg, varname);
+    } else {
+        int off = getVarOffset((char*)varname);
+        fprintf(output, "    l.s $f%d, %d($sp)     # load float '%s'\n", freg, off, varname);
+    }
+}
+
+static void emitFloatStore(const char* varname, int freg) {
+    if (isGlobalVarCG(varname)) {
+        fprintf(output, "    la $t8, %s\n", varname);
+        fprintf(output, "    s.s $f%d, 0($t8)     # store global float '%s'\n", freg, varname);
+    } else {
+        int off = getVarOffset((char*)varname);
+        fprintf(output, "    s.s $f%d, %d($sp)     # store float '%s'\n", freg, off, varname);
+    }
+}
+
 /* FPU REGISTER ALLOCATOR — $f4 .. $f11 (8 single-precision registers) */
 #define NUM_FPU_REGS 8   /* indices 0-7, mapped to $f(i+4) */
 typedef struct {
@@ -97,6 +236,35 @@ typedef struct {
 } FPURegDesc;
 static FPURegDesc fpuRegs[NUM_FPU_REGS];
 static int fpuTimestamp = 0;
+
+/* Float temp spill table — records stack offsets for TAC temps spilled from FPU.
+ * Uses stack offsets 440..495, safely between local vars (0-399) and
+ * saved-register area (500-539). */
+#define MAX_FLOAT_SPILL_SLOTS 14
+#define FLOAT_SPILL_BASE 440
+typedef struct { char name[MAX_VAR_NAME]; int offset; } FloatSpillEntry;
+static FloatSpillEntry floatSpillTable[MAX_FLOAT_SPILL_SLOTS];
+static int numFloatSpills = 0;
+
+static void resetFloatSpillTable() { numFloatSpills = 0; }
+
+static int getOrAssignFloatSpillOffset(const char* name) {
+    for (int i = 0; i < numFloatSpills; i++)
+        if (strcmp(floatSpillTable[i].name, name) == 0) return floatSpillTable[i].offset;
+    if (numFloatSpills < MAX_FLOAT_SPILL_SLOTS) {
+        strncpy(floatSpillTable[numFloatSpills].name, name, MAX_VAR_NAME - 1);
+        int off = FLOAT_SPILL_BASE + numFloatSpills * 4;
+        floatSpillTable[numFloatSpills++].offset = off;
+        return off;
+    }
+    return -1; /* out of spill slots */
+}
+
+static int findFloatSpillOffset(const char* name) {
+    for (int i = 0; i < numFloatSpills; i++)
+        if (strcmp(floatSpillTable[i].name, name) == 0) return floatSpillTable[i].offset;
+    return -1;
+}
 
 static void initFPURegs() {
     for (int i = 0; i < NUM_FPU_REGS; i++) {
@@ -138,10 +306,19 @@ static int allocFPUReg(const char* varName) {
         if (fpuRegs[i].lastUsed < fpuRegs[victim].lastUsed) victim = i;
 
     int victimReg = victim + 4;
-    int offset = getVarOffset(fpuRegs[victim].varName);
-    if (offset != -1)
-        fprintf(output, "    s.s $f%d, %d($sp)    # spill float %s\n",
-                victimReg, offset, fpuRegs[victim].varName);
+    if (isGlobalVarCG(fpuRegs[victim].varName)) {
+        fprintf(output, "    la $t8, %s\n", fpuRegs[victim].varName);
+        fprintf(output, "    s.s $f%d, 0($t8)    # spill global float %s\n",
+                victimReg, fpuRegs[victim].varName);
+    } else {
+        int offset = getVarOffset(fpuRegs[victim].varName);
+        if (offset == -1)
+            /* TAC temp — use spill table so we can reload it later */
+            offset = getOrAssignFloatSpillOffset(fpuRegs[victim].varName);
+        if (offset != -1)
+            fprintf(output, "    s.s $f%d, %d($sp)    # spill float temp %s\n",
+                    victimReg, offset, fpuRegs[victim].varName);
+    }
 
     fpuRegs[victim].inUse    = 1;
     fpuRegs[victim].lastUsed = fpuTimestamp++;
@@ -157,10 +334,41 @@ static void freeFPUReg(int regNum) {
     }
 }
 
+/* Reload a spilled float temp into a fresh FPU register.
+ * Returns the FPU register number, or -1 if not in the spill table. */
+static int reloadFloatTemp(const char* name) {
+    int spOffset = findFloatSpillOffset(name);
+    if (spOffset == -1) return -1;
+    int freg = allocFPUReg(name);  /* may spill another; that's fine */
+    fprintf(output, "    l.s $f%d, %d($sp)    # reload spilled float temp %s\n",
+            freg, spOffset, name);
+    return freg;
+}
+
 /* Returns 1 if name is a declared float variable */
 static int isFloatVar(const char* name) {
     char* t = getVarType((char*)name);
     return t != NULL && strcmp(t, "float") == 0;
+}
+
+/* Returns 1 if name is a declared char variable (local or global) */
+static int isCharVar(const char* name) {
+    char* t = getVarType((char*)name);
+    if (t != NULL && strcmp(t, "char") == 0) return 1;
+    for (int i = 0; i < numGlobalVars; i++)
+        if (strcmp(globalVarTable[i].name, name) == 0 &&
+            strcmp(globalVarTable[i].type, "char") == 0) return 1;
+    return 0;
+}
+
+/* Returns 1 if name is a declared boolean variable (local or global) */
+static int isBoolVar(const char* name) {
+    char* t = getVarType((char*)name);
+    if (t != NULL && strcmp(t, "boolean") == 0) return 1;
+    for (int i = 0; i < numGlobalVars; i++)
+        if (strcmp(globalVarTable[i].name, name) == 0 &&
+            strcmp(globalVarTable[i].type, "boolean") == 0) return 1;
+    return 0;
 }
 
 /* Returns 1 if name currently lives in an FPU register */
@@ -290,12 +498,19 @@ void spillReg(int regNum) {
 
     /* Only spill if dirty (value was modified) */
     if (regAlloc.regs[regNum].isDirty) {
-        int offset = getVarOffset(regAlloc.regs[regNum].varName);
-        if (offset != -1) {
-            fprintf(output, "    # Spilling $t%d (%s) to memory\n", regNum,
-                    regAlloc.regs[regNum].varName);
-            fprintf(output, "    sw $t%d, %d($sp)\n", regNum, offset);
+        const char* spillName = regAlloc.regs[regNum].varName;
+        fprintf(output, "    # Spilling $t%d (%s) to memory\n", regNum, spillName);
+        if (isGlobalVarCG(spillName)) {
+            fprintf(output, "    sw $t%d, %s\n", regNum, spillName);
             regAlloc.spillCount++;
+        } else {
+            int offset = getVarOffset(spillName);
+            if (offset != -1) {
+                fprintf(output, "    sw $t%d, %d($sp)\n", regNum, offset);
+                regAlloc.spillCount++;
+            }
+        }
+        {  /* dummy block to satisfy original brace matching below */
         }
     }
 
@@ -584,7 +799,7 @@ void generateMIPS(ASTNode* root, const char* filename) {
 
     // Allocate stack space (max 100 variables * 4 bytes)
     fprintf(output, "    # Allocate stack space\n");
-    fprintf(output, "    addi $sp, $sp, -400\n\n");
+    fprintf(output, "    addi $sp, $sp, -800\n\n");
 
     // Generate code for statements
     genStmt(root);
@@ -599,7 +814,7 @@ void generateMIPS(ASTNode* root, const char* filename) {
 
     // Program exit
     fprintf(output, "\n    # Exit program\n");
-    fprintf(output, "    addi $sp, $sp, 400\n");
+    fprintf(output, "    addi $sp, $sp, 800\n");
     fprintf(output, "    li $v0, 10\n");
     fprintf(output, "    syscall\n");
 
@@ -652,9 +867,10 @@ void generateMIPSFromTAC(const char* filename) {
         return;
     }
 
-    // Pre-pass: collect all string and float literals so .data can be emitted first
+    // Pre-pass: collect all string/float literals and global variables
     collectStringLiterals(tac->head);
     collectFloatLiterals(tac->head);
+    collectGlobalVars(tac->head);
     initFPURegs();
 
     // MIPS program header — .data section
@@ -674,6 +890,19 @@ void generateMIPSFromTAC(const char* filename) {
             fprintf(output, "%s:\t.float %s\n", floatLitTable[i].label, fbuf);
         }
     }
+    /* Global variables — emitted as .word / .float / .space in .data */
+    for (int i = 0; i < numGlobalVars; i++) {
+        GlobalVarEntry* g = &globalVarTable[i];
+        if (g->isArray) {
+            fprintf(output, "%s:\t.space %d\n", g->name, g->arraySize * 4);
+        } else if (strcmp(g->type, "float") == 0) {
+            fprintf(output, "%s:\t.float 0.0\n", g->name);
+        } else {
+            fprintf(output, "%s:\t.word 0\n", g->name);
+        }
+    }
+    fprintf(output, "_bool_true:\t.asciiz \"true\"\n");
+    fprintf(output, "_bool_false:\t.asciiz \"false\"\n");
     fprintf(output, "_heap_ptr:\t.word _heap_mem\n");
     fprintf(output, "_heap_mem:\t.space 4096\n");
 
@@ -757,8 +986,27 @@ void generateMIPSFromTAC(const char* filename) {
     fprintf(output, "    addi $sp, $sp, 4\n");
     fprintf(output, "    jr $ra\n\n");
 
+    /* ── __print_bool subroutine ───────────────────────────────────────────
+     * Input:  $a0 (0 = false, non-zero = true)
+     * Prints "true" or "false" via syscall 4 (print_string)
+     * Clobbers: $v0, $a0
+     */
+    fprintf(output, "__print_bool:\n");
+    fprintf(output, "    beqz $a0, __pb_false\n");
+    fprintf(output, "    la $a0, _bool_true\n");
+    fprintf(output, "    j __pb_print\n");
+    fprintf(output, "__pb_false:\n");
+    fprintf(output, "    la $a0, _bool_false\n");
+    fprintf(output, "__pb_print:\n");
+    fprintf(output, "    li $v0, 4\n");
+    fprintf(output, "    syscall\n");
+    fprintf(output, "    jr $ra\n\n");
+
     // Track current function for return code generation
     static char currentFuncName[64] = "";
+
+    // Build table of functions that return float (used in TAC_CALL / TAC_RETURN)
+    buildFloatFuncTable(tac);
 
     // Process each TAC instruction
     TACInstr* curr = tac->head;
@@ -768,15 +1016,92 @@ void generateMIPSFromTAC(const char* filename) {
                 // Function begin - reset symbol table for new function scope
                 initSymTab();
                 initRegAlloc();
+                initFPURegs();
+                resetFloatSpillTable();
                 argIndex = 0;
                 paramIndex = 0;
                 strncpy(currentFuncName, curr->result, sizeof(currentFuncName) - 1);
 
                 fprintf(output, "\n# Function: %s\n", curr->result);
                 fprintf(output, "%s:\n", curr->result);
-                fprintf(output, "    addi $sp, $sp, -400\n");
+                fprintf(output, "    addi $sp, $sp, -800\n");
                 if (strcmp(curr->result, "main") != 0) {
-                    fprintf(output, "    sw $ra, 396($sp)\n");
+                    fprintf(output, "    sw $ra, 796($sp)\n");
+                }
+
+                /* For main: emit global variable initializations here so they
+                 * actually execute (SPIM starts at 'main', not top of .text). */
+                if (strcmp(curr->result, "main") == 0 && numGlobalVars > 0) {
+                    /* Temp→constant map for the global-scope TAC */
+                    #define MAX_GINIT_TEMPS 64
+                    struct { char name[32]; char val[32]; } gt[MAX_GINIT_TEMPS];
+                    int gtCount = 0;
+
+                    fprintf(output, "    # --- global variable initialization ---\n");
+                    for (TACInstr* g = tac->head; g && g->op != TAC_FUNC_BEGIN; g = g->next) {
+                        if (g->op == TAC_FLOAT_ASSIGN) {
+                            const char* lbl = lookupFloatLabelByValue(g->arg1);
+                            int freg = allocFPUReg(g->result);
+                            fprintf(output, "    l.s $f%d, %s\n", freg, lbl);
+                            /* record temp→fpu so subsequent ASSIGN can find it */
+                        } else if (g->op == TAC_ASSIGN && isTACTemp(g->result) && isConstant(g->arg1)) {
+                            if (gtCount < MAX_GINIT_TEMPS) {
+                                strncpy(gt[gtCount].name, g->result, 31);
+                                strncpy(gt[gtCount].val,  g->arg1,   31);
+                                gtCount++;
+                            }
+                        } else if (g->op == TAC_ASSIGN && isGlobalVarCG(g->result)) {
+                            if (isGlobalFloatVar(g->result) || isFloatTemp(g->arg1)) {
+                                int fsrc = findFPUReg(g->arg1);
+                                if (fsrc != -1) emitFloatStore(g->result, fsrc);
+                            } else {
+                                /* resolve constant: direct or via temp */
+                                const char* val = NULL;
+                                if (isConstant(g->arg1)) {
+                                    val = g->arg1;
+                                } else if (isTACTemp(g->arg1)) {
+                                    for (int _i = 0; _i < gtCount; _i++)
+                                        if (strcmp(gt[_i].name, g->arg1) == 0) { val = gt[_i].val; break; }
+                                }
+                                if (val) {
+                                    fprintf(output, "    li $t9, %s\n", val);
+                                    fprintf(output, "    la $t8, %s\n", g->result);
+                                    fprintf(output, "    sw $t9, 0($t8)     # %s = %s\n", g->result, val);
+                                } else if (isGlobalVarCG(g->arg1)) {
+                                    fprintf(output, "    la $t8, %s\n", g->arg1);
+                                    fprintf(output, "    lw $t9, 0($t8)\n");
+                                    fprintf(output, "    la $t8, %s\n", g->result);
+                                    fprintf(output, "    sw $t9, 0($t8)\n");
+                                }
+                            }
+                        } else if (g->op == TAC_ARRAY_ASSIGN && isGlobalVarCG(g->result)) {
+                            /* Global array element init: result[arg1] = arg2 */
+                            /* Resolve index */
+                            const char* idxStr = NULL;
+                            if (isConstant(g->arg1)) {
+                                idxStr = g->arg1;
+                            } else if (isTACTemp(g->arg1)) {
+                                for (int _i = 0; _i < gtCount; _i++)
+                                    if (strcmp(gt[_i].name, g->arg1) == 0) { idxStr = gt[_i].val; break; }
+                            }
+                            /* Resolve value */
+                            const char* valStr = NULL;
+                            if (isConstant(g->arg2)) {
+                                valStr = g->arg2;
+                            } else if (isTACTemp(g->arg2)) {
+                                for (int _i = 0; _i < gtCount; _i++)
+                                    if (strcmp(gt[_i].name, g->arg2) == 0) { valStr = gt[_i].val; break; }
+                            }
+                            if (idxStr && valStr) {
+                                int idx = atoi(idxStr);
+                                fprintf(output, "    la $t8, %s\n", g->result);
+                                fprintf(output, "    li $t9, %s\n", valStr);
+                                fprintf(output, "    sw $t9, %d($t8)     # %s[%d] = %s\n",
+                                        idx * 4, g->result, idx, valStr);
+                            }
+                        }
+                    }
+                    fprintf(output, "    # --- end global init ---\n");
                 }
                 break;
             }
@@ -786,12 +1111,12 @@ void generateMIPSFromTAC(const char* filename) {
                 fprintf(output, "    # End of function %s\n", curr->result);
                 if (strcmp(curr->result, "main") == 0) {
                     // Main exits the program
-                    fprintf(output, "    addi $sp, $sp, 400\n");
+                    fprintf(output, "    addi $sp, $sp, 800\n");
                     fprintf(output, "    li $v0, 10\n");
                     fprintf(output, "    syscall\n");
                 } else {
-                    fprintf(output, "    lw $ra, 396($sp)\n");
-                    fprintf(output, "    addi $sp, $sp, 400\n");
+                    fprintf(output, "    lw $ra, 796($sp)\n");
+                    fprintf(output, "    addi $sp, $sp, 800\n");
                     fprintf(output, "    jr $ra\n");
                 }
                 break;
@@ -806,9 +1131,9 @@ void generateMIPSFromTAC(const char* filename) {
                 }
                 // Load parameter from caller's argument area on the stack
                 // Caller stored args at ARG_AREA_OFFSET + i*4 in its frame
-                // After callee's addi $sp, $sp, -400, caller's frame is at $sp+400
-                // So args are at $sp + 400 + ARG_AREA_OFFSET + paramIndex*4
-                int callerArgOffset = 400 + ARG_AREA_OFFSET + paramIndex * 4;
+                // After callee's addi $sp, $sp, -800, caller's frame is at $sp+800
+                // So args are at $sp + 800 + ARG_AREA_OFFSET + paramIndex*4
+                int callerArgOffset = 800 + ARG_AREA_OFFSET + paramIndex * 4;
                 int reg = allocReg(curr->result);
                 fprintf(output, "    lw $t%d, %d($sp)      # Load parameter '%s' from caller arg %d\n",
                         reg, callerArgOffset, curr->result, paramIndex);
@@ -819,7 +1144,12 @@ void generateMIPSFromTAC(const char* filename) {
             }
 
             case TAC_DECL: {
-                // Declare variable in symbol table
+                // Globals are in .data — skip addVar for them
+                if (isGlobalVarCG(curr->result)) {
+                    fprintf(output, "    # Global '%s' lives in .data\n", curr->result);
+                    break;
+                }
+                // Declare local variable in symbol table
                 int offset = addVar(curr->result, curr->type);
                 if (offset == -1) {
                     fprintf(stderr, "Error: Variable %s already declared\n", curr->result);
@@ -849,21 +1179,21 @@ void generateMIPSFromTAC(const char* filename) {
                     int f1;
                     if (isTACTemp(curr->arg1)) {
                         f1 = findFPUReg(curr->arg1);
+                        if (f1 == -1) f1 = reloadFloatTemp(curr->arg1);
                         if (f1 == -1) { fprintf(stderr,"Error: float temp %s not in FPU\n",curr->arg1); exit(1); }
                     } else {
-                        int off = getVarOffset(curr->arg1);
                         f1 = allocFPUReg(curr->arg1);
-                        fprintf(output, "    l.s $f%d, %d($sp)    # load float %s\n", f1, off, curr->arg1);
+                        emitFloatLoad(curr->arg1, f1);
                     }
                     // Load arg2 into FPU register
                     int f2;
                     if (isTACTemp(curr->arg2)) {
                         f2 = findFPUReg(curr->arg2);
+                        if (f2 == -1) f2 = reloadFloatTemp(curr->arg2);
                         if (f2 == -1) { fprintf(stderr,"Error: float temp %s not in FPU\n",curr->arg2); exit(1); }
                     } else {
-                        int off = getVarOffset(curr->arg2);
                         f2 = allocFPUReg(curr->arg2);
-                        fprintf(output, "    l.s $f%d, %d($sp)    # load float %s\n", f2, off, curr->arg2);
+                        emitFloatLoad(curr->arg2, f2);
                     }
                     int fResult = allocFPUReg(curr->result);
                     switch (curr->op) {
@@ -895,42 +1225,28 @@ void generateMIPSFromTAC(const char* filename) {
                         exit(1);
                     }
                 } else {
-                    // Named variable - always reload from memory for loop correctness
-                    int offset = getVarOffset(curr->arg1);
-                    if (offset == -1) {
-                        fprintf(stderr, "Error: Variable %s not declared\n", curr->arg1);
-                        exit(1);
-                    }
+                    // Named variable — reload from global label or stack
                     reg1 = allocReg(curr->arg1);
-                    fprintf(output, "    lw $t%d, %d($sp)     # Load variable '%s'\n",
-                            reg1, offset, curr->arg1);
+                    emitIntLoad(curr->arg1, reg1);
                 }
 
                 // Load arg2 into register
                 if (isConstant(curr->arg2)) {
-                    // arg2 is a constant
                     char tempName[32];
                     sprintf(tempName, "const_%s", curr->arg2);
                     reg2 = allocReg(tempName);
                     fprintf(output, "    li $t%d, %s         # Load constant %s\n",
                             reg2, curr->arg2, curr->arg2);
                 } else if (isTACTemp(curr->arg2)) {
-                    // TAC temporary - must already be in a register
                     reg2 = findVarReg(curr->arg2);
                     if (reg2 == -1) {
                         fprintf(stderr, "Error: TAC temporary %s not in register\n", curr->arg2);
                         exit(1);
                     }
                 } else {
-                    // Named variable - always reload from memory for loop correctness
-                    int offset = getVarOffset(curr->arg2);
-                    if (offset == -1) {
-                        fprintf(stderr, "Error: Variable %s not declared\n", curr->arg2);
-                        exit(1);
-                    }
+                    // Named variable — reload from global label or stack
                     reg2 = allocReg(curr->arg2);
-                    fprintf(output, "    lw $t%d, %d($sp)     # Load variable '%s'\n",
-                            reg2, offset, curr->arg2);
+                    emitIntLoad(curr->arg2, reg2);
                 }
 
                 // Allocate register for result
@@ -1017,9 +1333,8 @@ void generateMIPSFromTAC(const char* filename) {
                         exit(1);
                     }
                 } else {
-                    int offset = getVarOffset(curr->arg1);
                     reg1 = allocReg(curr->arg1);
-                    fprintf(output, "    lw $t%d, %d($sp)    # load %s\n", reg1, offset, curr->arg1);
+                    emitIntLoad(curr->arg1, reg1);
                 }
                 regResult = allocReg(curr->result);
                 fprintf(output, "    seq $t%d, $t%d, $zero  # %s = not %s\n",
@@ -1032,64 +1347,64 @@ void generateMIPSFromTAC(const char* filename) {
 
             case TAC_ASSIGN: {
                 // result = arg1
+                /* Skip global variable assignments outside any function —
+                 * they are handled inside the main() prologue init block. */
+                if (isGlobalVarCG(curr->result) && currentFuncName[0] == '\0') break;
                 int isTempResult = isTACTemp(curr->result);
-                int offset = -1;
-
-                // Get offset for real variables (not TAC temporaries)
-                if (!isTempResult) {
-                    offset = getVarOffset(curr->result);
-                    if (offset == -1) {
-                        fprintf(stderr, "Error: Variable %s not declared\n", curr->result);
-                        exit(1);
-                    }
-                }
 
                 // Float assignment path
-                if (!isTempResult && isFloatVar(curr->result)) {
+                if (!isTempResult && (isFloatVar(curr->result) || isGlobalFloatVar(curr->result))) {
                     int fsrc;
                     if (isTACTemp(curr->arg1) || isFloatTemp(curr->arg1)) {
                         fsrc = findFPUReg(curr->arg1);
-                        if (fsrc == -1) { fprintf(stderr,"Error: float temp %s not in FPU\n",curr->arg1); exit(1); }
-                    } else if (isFloatVar(curr->arg1)) {
-                        int srcOff = getVarOffset(curr->arg1);
+                        if (fsrc == -1) {
+                            /* Temp is in an integer register (e.g. result of int division
+                             * being assigned to a float var) — convert int→float. */
+                            int ireg = findVarReg(curr->arg1);
+                            if (ireg == -1) {
+                                fprintf(stderr, "Error: temp %s not in any register\n", curr->arg1);
+                                exit(1);
+                            }
+                            fsrc = allocFPUReg(curr->arg1);
+                            fprintf(output, "    mtc1 $t%d, $f%d      # int->float convert\n", ireg, fsrc);
+                            fprintf(output, "    cvt.s.w $f%d, $f%d\n", fsrc, fsrc);
+                        }
+                    } else if (isFloatVar(curr->arg1) || isGlobalFloatVar(curr->arg1)) {
                         fsrc = allocFPUReg(curr->arg1);
-                        fprintf(output, "    l.s $f%d, %d($sp)    # load float %s\n", fsrc, srcOff, curr->arg1);
+                        emitFloatLoad(curr->arg1, fsrc);
+                    } else if (isConstant(curr->arg1)) {
+                        /* Integer constant assigned to float var (e.g. r = 0) */
+                        fsrc = allocFPUReg(curr->arg1);
+                        int tmpReg = allocReg("__int2flt");
+                        fprintf(output, "    li $t%d, %s\n", tmpReg, curr->arg1);
+                        fprintf(output, "    mtc1 $t%d, $f%d      # int->float convert\n", tmpReg, fsrc);
+                        fprintf(output, "    cvt.s.w $f%d, $f%d\n", fsrc, fsrc);
+                        freeReg(tmpReg);
                     } else {
                         fprintf(stderr, "Error: cannot assign non-float to float variable %s\n", curr->result);
                         exit(1);
                     }
-                    fprintf(output, "    s.s $f%d, %d($sp)    # store float %s\n", fsrc, offset, curr->result);
+                    emitFloatStore(curr->result, fsrc);
                     break;
                 }
 
                 // Integer assignment path
                 int regSrc, regDest;
-                // Load source value into register
                 if (isConstant(curr->arg1)) {
-                    // Source is a constant
                     regDest = allocReg(curr->result);
                     fprintf(output, "    li $t%d, %s         # %s = %s (constant)\n",
                             regDest, curr->arg1, curr->result, curr->arg1);
                 } else {
-                    // Source is a variable or TAC temporary
                     regSrc = findVarReg(curr->arg1);
                     if (regSrc == -1) {
-                        // Not in register, need to load
                         if (isTACTemp(curr->arg1)) {
                             fprintf(stderr, "Error: TAC temporary %s not in register\n", curr->arg1);
                             exit(1);
                         }
-                        int srcOffset = getVarOffset(curr->arg1);
-                        if (srcOffset == -1) {
-                            fprintf(stderr, "Error: Variable %s not declared\n", curr->arg1);
-                            exit(1);
-                        }
                         regSrc = allocReg(curr->arg1);
-                        fprintf(output, "    lw $t%d, %d($sp)     # Load variable '%s'\n",
-                                regSrc, srcOffset, curr->arg1);
+                        emitIntLoad(curr->arg1, regSrc);
                     }
 
-                    // For real variables, we might need a different register
                     if (!isTempResult) {
                         regDest = allocReg(curr->result);
                         if (regDest != regSrc) {
@@ -1097,36 +1412,32 @@ void generateMIPSFromTAC(const char* filename) {
                                     regDest, regSrc, curr->result, curr->arg1);
                         }
                     } else {
-                        // For TAC temporaries, reuse the source register
                         regDest = regSrc;
-                        // Update register descriptor
                         strncpy(regAlloc.regs[regDest].varName, curr->result, MAX_VAR_NAME - 1);
                     }
                 }
 
                 // Store to memory only for real variables (not TAC temporaries)
                 if (!isTempResult) {
-                    fprintf(output, "    sw $t%d, %d($sp)     # Store to '%s'\n",
-                            regDest, offset, curr->result);
-                    // Update register descriptor
+                    emitIntStore(curr->result, regDest);
                     strncpy(regAlloc.regs[regDest].varName, curr->result, MAX_VAR_NAME - 1);
-                    regAlloc.regs[regDest].isDirty = 0;  /* No longer dirty after store */
+                    regAlloc.regs[regDest].isDirty = 0;
                 }
 
                 break;
             }
 
             case TAC_PRINT: {
-                // PRINT arg1 — float path: syscall 2 (print_float) via $f12
-                if (isFloatVar(curr->arg1) || isFloatTemp(curr->arg1)) {
+                // PRINT arg1 — float path
+                if (isFloatVar(curr->arg1) || isFloatTemp(curr->arg1) || isGlobalFloatVar(curr->arg1)) {
                     int fprint;
                     if (isFloatTemp(curr->arg1)) {
                         fprint = findFPUReg(curr->arg1);
+                        if (fprint == -1) fprint = reloadFloatTemp(curr->arg1);
                         if (fprint == -1) { fprintf(stderr,"Error: float temp %s not in FPU\n",curr->arg1); exit(1); }
                     } else {
-                        int off = getVarOffset(curr->arg1);
                         fprint = allocFPUReg(curr->arg1);
-                        fprintf(output, "    l.s $f%d, %d($sp)    # load float %s for print\n", fprint, off, curr->arg1);
+                        emitFloatLoad(curr->arg1, fprint);
                     }
                     fprintf(output, "    # Print float\n");
                     fprintf(output, "    mov.s $f12, $f%d\n", fprint);
@@ -1138,42 +1449,70 @@ void generateMIPSFromTAC(const char* filename) {
                     break;
                 }
 
-                // Integer print path
-                int regPrint;
+                // Bool print path — call __print_bool subroutine
+                if (isBoolVar(curr->arg1)) {
+                    int regB;
+                    if (isConstant(curr->arg1)) {
+                        char tempName[32];
+                        sprintf(tempName, "const_%s", curr->arg1);
+                        regB = allocReg(tempName);
+                        fprintf(output, "    li $t%d, %s\n", regB, curr->arg1);
+                    } else {
+                        regB = findVarReg(curr->arg1);
+                        if (regB == -1) {
+                            if (isTACTemp(curr->arg1)) {
+                                fprintf(stderr, "Error: TAC temporary %s not in register\n", curr->arg1);
+                                exit(1);
+                            }
+                            regB = allocReg(curr->arg1);
+                            emitIntLoad(curr->arg1, regB);
+                        }
+                    }
+                    fprintf(output, "    # Print boolean\n");
+                    fprintf(output, "    move $a0, $t%d\n", regB);
+                    fprintf(output, "    jal __print_bool\n");
+                    fprintf(output, "    # Print newline\n");
+                    fprintf(output, "    li $v0, 11\n");
+                    fprintf(output, "    li $a0, 10\n");
+                    fprintf(output, "    syscall\n");
+                    freeReg(regB);
+                    break;
+                }
 
-                // Load value to print
+                // Char print path — load value then syscall 11 (print_char)
+                int isChar = isCharVar(curr->arg1);
+                int regPrint;
                 if (isConstant(curr->arg1)) {
-                    // Constant value
                     char tempName[32];
                     sprintf(tempName, "const_%s", curr->arg1);
                     regPrint = allocReg(tempName);
-                    fprintf(output, "    li $t%d, %s         # Load constant %s for print\n",
-                            regPrint, curr->arg1, curr->arg1);
+                    fprintf(output, "    li $t%d, %s         # Load constant for print\n",
+                            regPrint, curr->arg1);
                 } else {
-                    // Variable or TAC temporary
                     regPrint = findVarReg(curr->arg1);
                     if (regPrint == -1) {
-                        // Not in register, need to load
                         if (isTACTemp(curr->arg1)) {
                             fprintf(stderr, "Error: TAC temporary %s not in register\n", curr->arg1);
                             exit(1);
                         }
-                        int offset = getVarOffset(curr->arg1);
-                        if (offset == -1) {
-                            fprintf(stderr, "Error: Variable %s not declared\n", curr->arg1);
-                            exit(1);
-                        }
                         regPrint = allocReg(curr->arg1);
-                        fprintf(output, "    lw $t%d, %d($sp)     # Load variable '%s' for print\n",
-                                regPrint, offset, curr->arg1);
+                        emitIntLoad(curr->arg1, regPrint);
                     }
                 }
 
-                // Print the value
-                fprintf(output, "    # Print integer\n");
-                fprintf(output, "    move $a0, $t%d\n", regPrint);
-                fprintf(output, "    li $v0, 1\n");
-                fprintf(output, "    syscall\n");
+                if (isChar) {
+                    // Print char via syscall 11
+                    fprintf(output, "    # Print char\n");
+                    fprintf(output, "    move $a0, $t%d\n", regPrint);
+                    fprintf(output, "    li $v0, 11\n");
+                    fprintf(output, "    syscall\n");
+                } else {
+                    // Print integer via syscall 1
+                    fprintf(output, "    # Print integer\n");
+                    fprintf(output, "    move $a0, $t%d\n", regPrint);
+                    fprintf(output, "    li $v0, 1\n");
+                    fprintf(output, "    syscall\n");
+                }
 
                 // Print newline
                 fprintf(output, "    # Print newline\n");
@@ -1315,19 +1654,46 @@ void generateMIPSFromTAC(const char* filename) {
                     break;
                 }
 
-                // Save caller-saved registers ($t0-$t9) at offsets 200-236
+                // Save caller-saved registers ($t0-$t9) at offsets 500-539
                 fprintf(output, "    # Call function %s\n", curr->arg1);
+                /* Writeback any dirty global variables to memory before the call
+                 * so the callee sees up-to-date values. */
+                for (int i = 0; i < NUM_TEMP_REGS; i++) {
+                    if (regAlloc.regs[i].inUse && regAlloc.regs[i].isDirty &&
+                        isGlobalVarCG(regAlloc.regs[i].varName)) {
+                        fprintf(output, "    la $t8, %s\n", regAlloc.regs[i].varName);
+                        fprintf(output, "    sw $t%d, 0($t8)   # writeback global before call\n", i);
+                        regAlloc.regs[i].isDirty = 0;
+                    }
+                }
                 for (int i = 0; i < 10; i++) {
-                    fprintf(output, "    sw $t%d, %d($sp)\n", i, 200 + i * 4);
+                    fprintf(output, "    sw $t%d, %d($sp)\n", i, 500 + i * 4);
                 }
                 fprintf(output, "    jal %s\n", curr->arg1);
                 // Restore caller-saved registers
                 for (int i = 0; i < 10; i++) {
-                    fprintf(output, "    lw $t%d, %d($sp)\n", i, 200 + i * 4);
+                    fprintf(output, "    lw $t%d, %d($sp)\n", i, 500 + i * 4);
                 }
-                // Move return value from $v0 into allocated register
-                int regResult = allocReg(curr->result);
-                fprintf(output, "    move $t%d, $v0\n", regResult);
+                /* Invalidate any cached global variables — the callee may have
+                 * modified them, so force a fresh reload from memory on next use. */
+                for (int i = 0; i < NUM_TEMP_REGS; i++) {
+                    if (regAlloc.regs[i].inUse && isGlobalVarCG(regAlloc.regs[i].varName)) {
+                        printf("    [REG ALLOC] Invalidated global '%s' in $t%d after call\n",
+                               regAlloc.regs[i].varName, i);
+                        regAlloc.regs[i].inUse    = 0;
+                        regAlloc.regs[i].isDirty  = 0;
+                        regAlloc.regs[i].varName[0] = '\0';
+                    }
+                }
+                // Move return value into result register
+                if (funcReturnsFloat(curr->arg1)) {
+                    /* Float-returning function: result is in $f0 */
+                    int fres = allocFPUReg(curr->result);
+                    fprintf(output, "    mov.s $f%d, $f0      # float return value\n", fres);
+                } else {
+                    int regResult = allocReg(curr->result);
+                    fprintf(output, "    move $t%d, $v0\n", regResult);
+                }
                 // Reset arg index for next call
                 argIndex = 0;
                 break;
@@ -1336,56 +1702,69 @@ void generateMIPSFromTAC(const char* filename) {
             case TAC_RETURN: {
                 // Return statement
                 if (curr->arg1) {
-                    // Load return value into register
-                    int regReturn;
-                    if (isConstant(curr->arg1)) {
-                        char tempName[32];
-                        sprintf(tempName, "const_%s", curr->arg1);
-                        regReturn = allocReg(tempName);
-                        fprintf(output, "    li $t%d, %s         # Load return value\n",
-                                regReturn, curr->arg1);
-                    } else if (isArrayVar(curr->arg1)) {
-                        // Returning an array - return its base address, not a value
-                        int offset = getVarOffset(curr->arg1);
-                        regReturn = allocReg(curr->arg1);
-                        fprintf(output, "    addi $t%d, $sp, %d   # Load address of array '%s'\n",
-                                regReturn, offset, curr->arg1);
-                    } else {
-                        regReturn = findVarReg(curr->arg1);
-                        if (regReturn == -1) {
-                            if (isTACTemp(curr->arg1)) {
-                                fprintf(stderr, "Error: TAC temporary %s not in register\n", curr->arg1);
-                                exit(1);
-                            }
-                            int offset = getVarOffset(curr->arg1);
-                            if (offset == -1) {
-                                fprintf(stderr, "Error: Variable %s not declared\n", curr->arg1);
-                                exit(1);
-                            }
-                            regReturn = allocReg(curr->arg1);
-                            fprintf(output, "    lw $t%d, %d($sp)     # Load return value '%s'\n",
-                                    regReturn, offset, curr->arg1);
+                    if (funcReturnsFloat(currentFuncName)) {
+                        /* Float return: put value in $f0 */
+                        int fret = findFPUReg(curr->arg1);
+                        if (fret == -1) {
+                            /* Load float var from memory into FPU */
+                            fret = allocFPUReg(curr->arg1);
+                            emitFloatLoad(curr->arg1, fret);
                         }
+                        fprintf(output, "    mov.s $f0, $f%d      # float return value\n", fret);
+                    } else {
+                        // Load return value into integer register
+                        int regReturn;
+                        if (isConstant(curr->arg1)) {
+                            char tempName[32];
+                            sprintf(tempName, "const_%s", curr->arg1);
+                            regReturn = allocReg(tempName);
+                            fprintf(output, "    li $t%d, %s         # Load return value\n",
+                                    regReturn, curr->arg1);
+                        } else if (isArrayVar(curr->arg1)) {
+                            int offset = getVarOffset(curr->arg1);
+                            regReturn = allocReg(curr->arg1);
+                            fprintf(output, "    addi $t%d, $sp, %d   # Load address of array '%s'\n",
+                                    regReturn, offset, curr->arg1);
+                        } else {
+                            regReturn = findVarReg(curr->arg1);
+                            if (regReturn == -1) {
+                                if (isTACTemp(curr->arg1)) {
+                                    fprintf(stderr, "Error: TAC temporary %s not in register\n", curr->arg1);
+                                    exit(1);
+                                }
+                                int offset = getVarOffset(curr->arg1);
+                                if (offset == -1) {
+                                    fprintf(stderr, "Error: Variable %s not declared\n", curr->arg1);
+                                    exit(1);
+                                }
+                                regReturn = allocReg(curr->arg1);
+                                fprintf(output, "    lw $t%d, %d($sp)     # Load return value '%s'\n",
+                                        regReturn, offset, curr->arg1);
+                            }
+                        }
+                        fprintf(output, "    move $v0, $t%d       # Move to return register\n", regReturn);
+                        freeReg(regReturn);
                     }
-                    fprintf(output, "    move $v0, $t%d       # Move to return register\n", regReturn);
-                    freeReg(regReturn);
                 }
                 // Emit return sequence (mirrors TAC_FUNC_END)
                 if (strcmp(currentFuncName, "main") == 0) {
-                    fprintf(output, "    addi $sp, $sp, 400\n");
+                    fprintf(output, "    addi $sp, $sp, 800\n");
                     fprintf(output, "    li $v0, 10\n");
                     fprintf(output, "    syscall\n");
                 } else {
-                    fprintf(output, "    lw $ra, 396($sp)     # Restore return address\n");
-                    fprintf(output, "    addi $sp, $sp, 400\n");
+                    fprintf(output, "    lw $ra, 796($sp)     # Restore return address\n");
+                    fprintf(output, "    addi $sp, $sp, 800\n");
                     fprintf(output, "    jr $ra               # Return from function\n");
                 }
                 break;
             }
 
             case TAC_ARRAY_DECL: {
-                // Declare array in symbol table
-                // arg1 holds the size as a string (from TAC generation)
+                // Global arrays are already in .data — skip addArrayVar for them
+                if (isGlobalVarCG(curr->result)) {
+                    fprintf(output, "    # Global array '%s' lives in .data\n", curr->result);
+                    break;
+                }
                 int size = curr->arg1 ? atoi(curr->arg1) : 10;
                 int offset = addArrayVar(curr->result, curr->type ? curr->type : "int", size);
                 if (offset == -1) {
@@ -1398,8 +1777,12 @@ void generateMIPSFromTAC(const char* filename) {
 
             case TAC_ARRAY_ASSIGN: {
                 // ARRAY_ASSIGN result[arg1] = arg2
-                int baseOffset = getVarOffset(curr->result);
-                if (baseOffset == -1) {
+                int isGlobalArr = isGlobalVarCG(curr->result);
+                /* Skip global array assignments outside any function — they are
+                 * handled inside the main() prologue init block instead. */
+                if (isGlobalArr && currentFuncName[0] == '\0') break;
+                int baseOffset = isGlobalArr ? 0 : getVarOffset(curr->result);
+                if (!isGlobalArr && baseOffset == -1) {
                     fprintf(stderr, "Error: Array %s not declared\n", curr->result);
                     exit(1);
                 }
@@ -1427,7 +1810,7 @@ void generateMIPSFromTAC(const char* filename) {
                 }
 
                 // Detect float array assignment
-                int isFloatArr = isFloatVar(curr->result) ||
+                int isFloatArr = isFloatVar(curr->result) || isGlobalFloatVar(curr->result) ||
                                  isFloatTemp(curr->arg2) ||
                                  (curr->arg2 && isTACTemp(curr->arg2) && findFPUReg(curr->arg2) != -1);
 
@@ -1435,7 +1818,9 @@ void generateMIPSFromTAC(const char* filename) {
                 int regAddr = allocReg("__arr_addr");
                 fprintf(output, "    # Array assign: %s[%s] = %s\n", curr->result, curr->arg1, curr->arg2);
                 fprintf(output, "    sll $t%d, $t%d, 2    # index * 4\n", regIndex, regIndex);
-                if (isArrayVar(curr->result)) {
+                if (isGlobalArr) {
+                    fprintf(output, "    la $t%d, %s          # base address of global '%s'\n", regAddr, curr->result, curr->result);
+                } else if (isArrayVar(curr->result)) {
                     fprintf(output, "    addi $t%d, $sp, %d   # base address of '%s'\n", regAddr, baseOffset, curr->result);
                 } else {
                     fprintf(output, "    lw $t%d, %d($sp)     # load pointer '%s'\n", regAddr, baseOffset, curr->result);
@@ -1447,6 +1832,7 @@ void generateMIPSFromTAC(const char* filename) {
                     int fval;
                     if (isFloatTemp(curr->arg2) || (isTACTemp(curr->arg2) && findFPUReg(curr->arg2) != -1)) {
                         fval = findFPUReg(curr->arg2);
+                        if (fval == -1) fval = reloadFloatTemp(curr->arg2);
                         if (fval == -1) { fprintf(stderr, "Error: float temp %s not in FPU\n", curr->arg2); exit(1); }
                     } else {
                         int off = getVarOffset(curr->arg2);
@@ -1485,8 +1871,9 @@ void generateMIPSFromTAC(const char* filename) {
 
             case TAC_ARRAY_ACCESS: {
                 // result = arg1[arg2]  (result = arrayName[index])
-                int baseOffset = getVarOffset(curr->arg1);
-                if (baseOffset == -1) {
+                int isGlobalArrAcc = isGlobalVarCG(curr->arg1);
+                int baseOffset = isGlobalArrAcc ? 0 : getVarOffset(curr->arg1);
+                if (!isGlobalArrAcc && baseOffset == -1) {
                     fprintf(stderr, "Error: Array %s not declared\n", curr->arg1);
                     exit(1);
                 }
@@ -1519,7 +1906,9 @@ void generateMIPSFromTAC(const char* filename) {
                 fprintf(output, "    # Array access: %s = %s[%s]\n", curr->result, curr->arg1, curr->arg2);
                 fprintf(output, "    move $t%d, $t%d    # copy index to scratch\n", regShifted, regIndex);
                 fprintf(output, "    sll $t%d, $t%d, 2    # index * 4\n", regShifted, regShifted);
-                if (isArrayVar(curr->arg1)) {
+                if (isGlobalArrAcc) {
+                    fprintf(output, "    la $t%d, %s          # base address of global '%s'\n", regAddr2, curr->arg1, curr->arg1);
+                } else if (isArrayVar(curr->arg1)) {
                     fprintf(output, "    addi $t%d, $sp, %d   # base address of '%s'\n", regAddr2, baseOffset, curr->arg1);
                 } else {
                     fprintf(output, "    lw $t%d, %d($sp)     # load pointer '%s'\n", regAddr2, baseOffset, curr->arg1);
@@ -1602,7 +1991,7 @@ void generateMIPSFromTAC(const char* filename) {
 
     // Program exit
     fprintf(output, "\n    # Exit program\n");
-    fprintf(output, "    addi $sp, $sp, 400\n");
+    fprintf(output, "    addi $sp, $sp, 800\n");
     fprintf(output, "    li $v0, 10\n");
     fprintf(output, "    syscall\n");
 
