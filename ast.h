@@ -33,7 +33,9 @@ typedef enum {
     NODE_CASE,        /* Case in switch statement (not implemented yet) */
     NODE_BREAK,       /* Break statement (not implemented yet) */
     NODE_STRING_LIT,  /* String literal (e.g., "Hello") */
-    NODE_FLOAT_LIT    /* Floating-point literal (e.g., 3.14) */
+    NODE_FLOAT_LIT,   /* Floating-point literal (e.g., 3.14) */
+    NODE_CHAR_LIT,    /* Character literal (e.g., 'a') */
+    NODE_BOOL_LIT     /* Boolean literal (true / false) */
 } NodeType;
 
 /* AST NODE STRUCTURE
@@ -220,6 +222,12 @@ ASTNode* makeStringLit(const char* s);
 
 /* Float literal constructor */
 ASTNode* makeFloatLit(double val);
+
+/* Char literal constructor */
+ASTNode* makeCharLit(int ascii);
+
+/* Bool literal constructor (val: 1=true, 0=false) */
+ASTNode* makeBoolLit(int val);
 
 /* Memory pool initialization */
 void init_ast_memory(void);
