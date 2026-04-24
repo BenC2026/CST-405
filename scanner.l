@@ -14,9 +14,14 @@ struct keyword {
     int token;
 };
 
-#define NUM_KEYWORDS 16
+#define NUM_KEYWORDS 21
 static struct keyword keywords[] = {
     {"int", INT},
+    {"char", CHAR_KW},
+    {"boolean", BOOLEAN_KW},
+    {"void", VOID_KW},
+    {"true", TRUE_LIT},
+    {"false", FALSE_LIT},
     {"string", STRING_KW},
     {"float", FLOAT},
     {"print", PRINT},
@@ -60,6 +65,11 @@ int check_keyword(const char* str) {
 %%
 
 "int"           { return INT; }
+"char"          { return CHAR_KW; }
+"boolean"       { return BOOLEAN_KW; }
+"void"          { return VOID_KW; }
+"true"          { yylval.num = 1; return TRUE_LIT; }
+"false"         { yylval.num = 0; return FALSE_LIT; }
 "string"        { return STRING_KW; }
 "float"         { return FLOAT; }
 "print"         { return PRINT; }
@@ -127,6 +137,23 @@ int check_keyword(const char* str) {
     /* strip surrounding quotes */
     yylval.sval = strndup(yytext+1, yyleng-2);
     return STRING_LITERAL;
+}
+
+\'([^\'\\]|\\.)\'  {
+    /* character literal: 'a', '\n', '\\', etc. */
+    char c = yytext[1];
+    if (c == '\\') {
+        switch (yytext[2]) {
+            case 'n':  c = '\n'; break;
+            case 't':  c = '\t'; break;
+            case '\\': c = '\\'; break;
+            case '\'': c = '\''; break;
+            case '0':  c = '\0'; break;
+            default:   c = yytext[2]; break;
+        }
+    }
+    yylval.num = (int)(unsigned char)c;
+    return CHAR_LIT;
 }
 
 [ \t\n]         { }
