@@ -288,6 +288,22 @@ ASTNode *makeFloatLit(double val) {
     return n;
 }
 
+ASTNode *makeCharLit(int ascii) {
+    ASTNode *n = (ASTNode*)ast_alloc(sizeof(ASTNode));
+    n->type = NODE_CHAR_LIT;
+    n->lineno = yylineno;
+    n->data.num = ascii;  /* store ASCII value in num field */
+    return n;
+}
+
+ASTNode *makeBoolLit(int val) {
+    ASTNode *n = (ASTNode*)ast_alloc(sizeof(ASTNode));
+    n->type = NODE_BOOL_LIT;
+    n->lineno = yylineno;
+    n->data.num = val;  /* 1 = true, 0 = false */
+    return n;
+}
+
 /* Display the AST structure (for debugging and education) */
 void printAST(ASTNode* node, int level) {
     if (!node) return;
@@ -302,6 +318,12 @@ void printAST(ASTNode* node, int level) {
             break;
         case NODE_FLOAT_LIT:
             printf("FLOAT: %g\n", node->fval);
+            break;
+        case NODE_CHAR_LIT:
+            printf("CHAR: '%c' (%d)\n", (char)node->data.num, node->data.num);
+            break;
+        case NODE_BOOL_LIT:
+            printf("BOOL: %s\n", node->data.num ? "true" : "false");
             break;
         case NODE_VAR:
             printf("VAR: %s\n", node->data.decl.name);
