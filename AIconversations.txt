@@ -4689,3 +4689,530 @@ Let me look at semantic.c to understand how variables are checked:
 Grep "isVarDeclared|addVar|NODE_VAR|NODE_DECL|NODE_ASSIGN" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\semantic.c)
 61 lines of output
 You've hit your limit · resets 3pm (America/Phoenix)
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Summary:
+1. Primary Request and Intent:
+   This session continues building CST-405-minimal, a teaching compiler targeting MIPS/SPIM 8.0. In chronological order, the user requested:
+   - Fix global array initialization (`int x[3]; x[0]=1; x[1]=2; x[2]=3;` at global scope)
+   - Implement `char` variables with character literals (`char x; x = 'a'; print(x);`)
+   - Implement `boolean` variables (`boolean x; x = true; print(x);` printing `true`/`false`)
+   - Implement `void` functions (no return value: `void greet() { print(999); }`)
+   - Fix float function return printing raw IEEE 754 bits (1077936128) instead of the float value
+   - Fix global variable modification by functions (`void increment() { gCount = gCount + 1; }`)
+   - Fix "Error: float temp t6 not in FPU" crash (FPU register spill not saving/reloading TAC temps)
+
+2. Key Technical Concepts:
+   - Flex/Bison compiler pipeline (scanner.l → parser.y → AST → semantic → TAC → codegen)
+   - MIPS assembly targeting SPIM 8.0 simulator
+   - Three-Address Code (TAC) as intermediate representation
+   - MIPS calling conventions: `$v0` for integer returns, `$f0` for float returns
+   - MIPS FPU registers ($f4-$f11), `mtc1`/`cvt.s.w` for int→float conversion
+   - SPIM syscalls: 1=print_int, 2=print_float, 4=print_string, 11=print_char
+   - LRU register allocation for integer ($t0-$t9) and FPU ($f4-$f11) registers
+   - Global variable writeback/invalidation around function calls
+   - FPU register spilling: evicting LRU FPU register to stack when all 8 are busy
+   - TAC temporary name reuse and lifetime tracking
+   - Stack frame layout with fixed 400-byte frame (local vars, saved regs, arg area, $ra)
+   - Float-returning function detection via TAC pre-scan
+
+3. Files and Code Sections:
+
+   - **scanner.l**
+     - Added `CHAR_KW`, character literal rule with escape sequences (`'a'`, `'\n'`, `'\t'`, etc.)
+     - Added `BOOLEAN_KW`, `TRUE_LIT` (yylval.num=1), `FALSE_LIT` (yylval.num=0)
+     - Added `VOID_KW`
+     - NUM_KEYWORDS now 21
+     ```c
+     "char"          { return CHAR_KW; }
+     "boolean"       { return BOOLEAN_KW; }
+     "void"          { return VOID_KW; }
+     "true"          { yylval.num = 1; return TRUE_LIT; }
+     "false"         { yylval.num = 0; return FALSE_LIT; }
+     \'([^\'\\]|\\.)\'  {
+         char c = yytext[1];
+         if (c == '\\') { switch (yytext[2]) { case 'n': c='\n'; break; ...} }
+         yylval.num = (int)(unsigned char)c;
+         return CHAR_LIT;
+     }
+     ```
+
+   - **parser.y**
+     - Added tokens: `CHAR_KW`, `BOOLEAN_KW`, `VOID_KW`, `CHAR_LIT <num>`, `TRUE_LIT <num>`, `FALSE_LIT <num>`
+     - Added to `decl`: `CHAR_KW ID ';'`, `BOOLEAN_KW ID ';'`
+     - Added to `param`: `CHAR_KW ID`, `BOOLEAN_KW ID`
+     - Added to `expr`: `CHAR_LIT`, `TRUE_LIT`, `FALSE_LIT`
+     - Added to `func_def`: `VOID_KW ID '(' params ')' block`, `VOID_KW ID '(' ')' block`, `BOOLEAN_KW ID '(' params ')' block`, `BOOLEAN_KW ID '(' ')' block`, `CHAR_KW ID '(' params ')' block`, `CHAR_KW ID '(' ')' block`
+
+   - **ast.h**
+     - Added `NODE_CHAR_LIT`, `NODE_BOOL_LIT` to NodeType enum
+     - Declared `makeCharLit(int ascii)` and `makeBoolLit(int val)`
+
+   - **ast.c**
+     - Implemented `makeCharLit` (stores ASCII in `data.num`)
+     - Implemented `makeBoolLit` (stores 1/0 in `data.num`)
+     - Added printAST cases for both
+
+   - **symtab.h**
+     - Added `TYPE_BOOL` to `VarType` enum
+
+   - **semantic.c**
+     - Added `"boolean"` → `TYPE_BOOL` mapping in `typeStringToVarType`
+
+   - **tac.c**
+     - Added `NODE_CHAR_LIT` and `NODE_BOOL_LIT` cases in `generateTACExpr` (both emit integer constants)
+     - Added `NODE_CHAR_LIT` and `NODE_BOOL_LIT` in `generateTACStmt`
+
+   - **codegen.c** (primary file, most changes):
+
+     **Global array init** (in `TAC_FUNC_BEGIN` for "main"):
+     ```c
+     } else if (g->op == TAC_ARRAY_ASSIGN && isGlobalVarCG(g->result)) {
+         const char* idxStr = NULL, *valStr = NULL;
+         if (isConstant(g->arg1)) idxStr = g->arg1;
+         else if (isTACTemp(g->arg1)) { /* lookup in gt[] */ }
+         if (isConstant(g->arg2)) valStr = g->arg2;
+         else if (isTACTemp(g->arg2)) { /* lookup in gt[] */ }
+         if (idxStr && valStr) {
+             int idx = atoi(idxStr);
+             fprintf(output, "    la $t8, %s\n", g->result);
+             fprintf(output, "    li $t9, %s\n", valStr);
+             fprintf(output, "    sw $t9, %d($t8)     # %s[%d] = %s\n", idx*4, g->result, idx, valStr);
+         }
+     }
+     ```
+
+     **Dead-code guards** (skip globals outside functions):
+     ```c
+     // In TAC_ARRAY_ASSIGN:
+     if (isGlobalArr && currentFuncName[0] == '\0') break;
+     // In TAC_ASSIGN:
+     if (isGlobalVarCG(curr->result) && currentFuncName[0] == '\0') break;
+     ```
+
+     **Bool support in .data and .text**:
+     ```c
+     fprintf(output, "_bool_true:\t.asciiz \"true\"\n");
+     fprintf(output, "_bool_false:\t.asciiz \"false\"\n");
+     // __print_bool subroutine:
+     fprintf(output, "__print_bool:\n");
+     fprintf(output, "    beqz $a0, __pb_false\n");
+     fprintf(output, "    la $a0, _bool_true\n");
+     fprintf(output, "    j __pb_print\n");
+     fprintf(output, "__pb_false:\n    la $a0, _bool_false\n");
+     fprintf(output, "__pb_print:\n    li $v0, 4\n    syscall\n    jr $ra\n\n");
+     ```
+
+     **`isCharVar` and `isBoolVar` helpers**:
+     ```c
+     static int isCharVar(const char* name) {
+         char* t = getVarType((char*)name);
+         if (t != NULL && strcmp(t, "char") == 0) return 1;
+         for (int i = 0; i < numGlobalVars; i++)
+             if (strcmp(globalVarTable[i].name, name) == 0 &&
+                 strcmp(globalVarTable[i].type, "char") == 0) return 1;
+         return 0;
+     }
+     static int isBoolVar(const char* name) { /* same pattern with "boolean" */ }
+     ```
+
+     **TAC_PRINT** now checks char (syscall 11) and bool (`jal __print_bool`) before integer path.
+
+     **Float return via $f0** — `buildFloatFuncTable` pre-scan:
+     ```c
+     static char floatReturnFuncs[MAX_FLOAT_FUNCS][64];
+     static int numFloatReturnFuncs = 0;
+     static void buildFloatFuncTable(TACList* tac) {
+         // Scans TAC: tracks float-typed DECL and FLOAT_ASSIGN temps per function
+         // Marks function as float-returning if RETURN arg is in float var set
+     }
+     static int funcReturnsFloat(const char* name) { ... }
+     ```
+
+     **TAC_RETURN** (float path):
+     ```c
+     if (funcReturnsFloat(currentFuncName)) {
+         int fret = findFPUReg(curr->arg1);
+         if (fret == -1) { fret = allocFPUReg(curr->arg1); emitFloatLoad(curr->arg1, fret); }
+         fprintf(output, "    mov.s $f0, $f%d      # float return value\n", fret);
+         // then jr $ra sequence (no $v0 assignment)
+     }
+     ```
+
+     **TAC_CALL** (float result):
+     ```c
+     if (funcReturnsFloat(curr->arg1)) {
+         int fres = allocFPUReg(curr->result);
+         fprintf(output, "    mov.s $f%d, $f0      # float return value\n", fres);
+     } else {
+         int regResult = allocReg(curr->result);
+         fprintf(output, "    move $t%d, $v0\n", regResult);
+     }
+     ```
+
+     **TAC_ASSIGN float path** — int-register temp to float var conversion:
+     ```c
+     if (fsrc == -1) {
+         int ireg = findVarReg(curr->arg1);
+         if (ireg == -1) { fprintf(stderr, "Error: temp %s not in any register\n"...); exit(1); }
+         fsrc = allocFPUReg(curr->arg1);
+         fprintf(output, "    mtc1 $t%d, $f%d      # int->float convert\n", ireg, fsrc);
+         fprintf(output, "    cvt.s.w $f%d, $f%d\n", fsrc, fsrc);
+     }
+     ```
+
+     **Global writeback/invalidate around jal** (in TAC_CALL):
+     ```c
+     /* Before saving registers: writeback dirty globals */
+     for (int i = 0; i < NUM_TEMP_REGS; i++) {
+         if (regAlloc.regs[i].inUse && regAlloc.regs[i].isDirty &&
+             isGlobalVarCG(regAlloc.regs[i].varName)) {
+             fprintf(output, "    la $t8, %s\n", regAlloc.regs[i].varName);
+             fprintf(output, "    sw $t%d, 0($t8)   # writeback global before call\n", i);
+             regAlloc.regs[i].isDirty = 0;
+         }
+     }
+     /* After restoring registers: invalidate cached globals */
+     for (int i = 0; i < NUM_TEMP_REGS; i++) {
+         if (regAlloc.regs[i].inUse && isGlobalVarCG(regAlloc.regs[i].varName)) {
+             regAlloc.regs[i].inUse = 0;
+             regAlloc.regs[i].isDirty = 0;
+             regAlloc.regs[i].varName[0] = '\0';
+         }
+     }
+     ```
+
+     **Float temp spill table** (most recent addition, partially working):
+     ```c
+     #define MAX_FLOAT_SPILL_SLOTS 14
+     #define FLOAT_SPILL_BASE 240   // ← PROBLEM: conflicts with local vars when N>50
+     typedef struct { char name[MAX_VAR_NAME]; int offset; } FloatSpillEntry;
+     static FloatSpillEntry floatSpillTable[MAX_FLOAT_SPILL_SLOTS];
+     static int numFloatSpills = 0;
+     static void resetFloatSpillTable() { numFloatSpills = 0; }
+     static int getOrAssignFloatSpillOffset(const char* name) { ... }
+     static int findFloatSpillOffset(const char* name) { ... }
+     ```
+
+     **Fixed `allocFPUReg` spill** for TAC temps:
+     ```c
+     } else {
+         int offset = getVarOffset(fpuRegs[victim].varName);
+         if (offset == -1)
+             offset = getOrAssignFloatSpillOffset(fpuRegs[victim].varName);
+         if (offset != -1)
+             fprintf(output, "    s.s $f%d, %d($sp)    # spill float temp %s\n", ...);
+     }
+     ```
+
+     **`reloadFloatTemp` helper**:
+     ```c
+     static int reloadFloatTemp(const char* name) {
+         int spOffset = findFloatSpillOffset(name);
+         if (spOffset == -1) return -1;
+         int freg = allocFPUReg(name);
+         fprintf(output, "    l.s $f%d, %d($sp)    # reload spilled float temp %s\n", freg, spOffset, name);
+         return freg;
+     }
+     ```
+
+     **All 4 crash sites** now try reload before failing:
+     ```c
+     if (f1 == -1) f1 = reloadFloatTemp(curr->arg1);
+     if (f2 == -1) f2 = reloadFloatTemp(curr->arg2);
+     if (fprint == -1) fprint = reloadFloatTemp(curr->arg1);
+     if (fval == -1) fval = reloadFloatTemp(curr->arg2);
+     ```
+
+     **TAC_FUNC_BEGIN**: now calls `initFPURegs()` and `resetFloatSpillTable()` in addition to existing `initSymTab()` and `initRegAlloc()`.
+
+   - **test.cm** (user's test file, now much larger):
+     ```c
+     /* Global integers */
+     int gCount;
+     int gTotal;
+     /* Global int array */
+     int gScores[5];
+     int main() { /* many test cases */ }
+     void greet() { print(999); }
+     int getAnswer() { return 42; }
+     int square(int n) { int result; result = n * n; return result; }
+     float average(int numerator, int denominator) { float r; r = numerator/denominator; return r; }
+     void increment() { gCount = gCount + 1; }
+     int factorial(int n) { if (n<=1) { return 1; } ... return n * factorial(sub); }
+     int sumArray(int arr[], int size) { ... }
+     boolean isEven(int n) { if (n == n/2*2) { return true; } return false; }
+     int fib(int n) { ... return fib(a) + fib(b); }
+     ```
+
+4. Errors and fixes:
+
+   - **"Error: TAC temporary t0 not in register"** (global array init): Global `TAC_ARRAY_ASSIGN` was being processed in the main loop before any function, generating dead code. Fixed by adding `currentFuncName[0] == '\0'` guard to skip, and adding proper init in `TAC_FUNC_BEGIN` for "main".
+
+   - **`5.40000010` float printing**: Pre-existing fix from previous session — `__print_float` subroutine in MIPS.
+
+   - **SPIM `syntax error on line 3 .float 2`**: Pre-existing fix — appending ".0" when `%g` omits decimal point.
+
+   - **"Syntax error" for `float list[3]`**: Pre-existing fix — added `FLOAT ID '[' NUM ']' ';'` to `decl`.
+
+   - **`1077936128` for `average(10, 3)`**: Float function return values were passing raw IEEE 754 bits through `$v0`. Fixed by using `$f0` for float returns with pre-scan function type table.
+
+   - **`print(gCount)` printing 0**: Register caching: `gCount=0` cached in `$t2`, restored from saved area after `increment()` call. Fixed by writing back dirty globals before `jal` and invalidating cached globals after.
+
+   - **"float temp t6 not in FPU"** (CURRENT ISSUE, NOT FULLY FIXED): FPU spill code silently skipped saving TAC temps (getVarOffset returns -1 for temps). Added float temp spill table and `reloadFloatTemp`. But `FLOAT_SPILL_BASE=240` conflicts with local variable storage when there are 50+ local variables (local var at offset 260 = float spill slot #5 at 240+5*4=260). The error persists.
+
+5. Problem Solving:
+   - Global array init: solved by adding `TAC_ARRAY_ASSIGN` handling in the main prologue init block
+   - Char/bool types: solved by adding complete pipeline support in all 6 files
+   - Void functions: solved trivially — codegen already handled no-return correctly
+   - Float return values: solved by pre-scanning TAC to identify float-returning functions and using `$f0`
+   - Global modification: solved by global register writeback/invalidate around calls
+   - FPU spill crash: PARTIALLY solved — spill table infrastructure added, but FLOAT_SPILL_BASE=240 conflicts with local variables in large programs, causing `reloadFloatTemp` to fail because the spilled value was overwritten
+
+6. All user messages:
+   - (Session continuation from summary — first message shown was about global array `int x[3]; x[0]=1...` giving "Error: Array x not declared")
+   - "Can you implement char variables like this: int main() { char x; x = 'a'; print(x); }"
+   - "Can you implement boolean variables like this: int main() { boolean x; x = true; print(x); }"
+   - "can you add functions with no return value like this one:" [IDE opened test.cm showing void greet, etc. — message was cut off but test.cm had full context]
+   - [Image showing SPIM output "1077936128"] "How do I get the average function to return a float and not a long integer:"
+   - [Image showing gCount=0] "How do you get a function to modify a global variable:"
+   - [Image showing "Error: float temp t4 not in FPU"] "How do I fix this error:" [INTERRUPTED BY USER]
+   - [Image showing "Error: float temp t6 not in FPU"] "How do I fix this error:" [INTERRUPTED BY USER]
+   - "How do I fix this error: [REG ALLOC] Allocated $t8 for 'const_2'... Error: float temp t6 not in FPU"
+
+7. Pending Tasks:
+   - **Fix "float temp t6 not in FPU"** — The float temp spill table infrastructure is in place, but `FLOAT_SPILL_BASE=240` collides with local variable storage when there are 50+ local variables. The stack frame layout needs to be redesigned so the float spill area doesn't overlap with the local variable area.
+   - The stack frame is 400 bytes with this layout: 0-199 local vars, 200-236 saved regs, 240-295 float spill (NEW — conflicts), 300-395 arg area, 396 $ra. With 50+ local vars, offsets exceed 200 and collide.
+   - Recommended fix: Increase frame size (e.g., to 800 bytes) and move all hardcoded areas up: local vars 0-399, saved regs at 400-436, float spill at 440-495, arg area at 500-595, $ra at 796. All constants `ARG_AREA_OFFSET=300`, `callerArgOffset = 400 + ARG_AREA_OFFSET`, saved reg base 200, $ra offset 396 need updating.
+
+8. Current Work:
+   Immediately before this summary, the work was fixing "Error: float temp t6 not in FPU". The changes made were:
+   1. Added `FloatSpillEntry` struct and `floatSpillTable[14]` at `FLOAT_SPILL_BASE=240`
+   2. Fixed `allocFPUReg` spill code to save TAC temps to the spill table
+   3. Added `reloadFloatTemp()` helper function
+   4. Added `resetFloatSpillTable()` call to `TAC_FUNC_BEGIN`
+   5. Fixed all 4 crash sites with `reloadFloatTemp` fallback
+
+   The test still failed: "Error: float temp t6 not in FPU". Analysis shows `reloadFloatTemp` returns -1 because `floatSpillTable` doesn't contain `t6` — the spill write went to offset 260 (FLOAT_SPILL_BASE + 5*4) which is also used by local variable slot #65, meaning the spill area overlaps with local variable storage in this large test program.
+
+9. Optional Next Step:
+   The next step must fix the root cause: `FLOAT_SPILL_BASE=240` conflicts with local variables. The solution is to increase the stack frame size and restructure the layout so the float spill area is safely above the local variable area.
+
+   From the most recent error message shown by the user: "Error: float temp t6 not in FPU" — the fix requires changing these constants in codegen.c:
+   - Frame size: 400 → 800 (update all `addi $sp, $sp, -400` / `addi $sp, $sp, 400`)
+   - `$ra` save offset: 396 → 796 (update all `sw $ra, 396($sp)` / `lw $ra, 396($sp)`)
+   - Saved integer register base: 200 → 500 (update `200 + i * 4` loops)
+   - `ARG_AREA_OFFSET`: 300 → 600 (update the `#define`)
+   - `callerArgOffset`: `400 + ARG_AREA_OFFSET` → `800 + ARG_AREA_OFFSET` (update in TAC_PARAM)
+   - `FLOAT_SPILL_BASE`: 240 → 440 (or higher, safely above local vars at 0-399)
+   
+   This gives layout: 0-399 local vars, 440-495 float spill, 500-539 saved regs, 600-795 arg area, 796 $ra — all safely separated.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: C:\Users\15203\.claude\projects\c--Users-15203-Downloads-CST-405-minimal-CST-405-minimal\e4b8da38-6419-412c-9e08-405ea72f29bf.jsonl
+Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, do not preface with "I'll continue" or similar. Pick up the last task as if the break never happened.
+Let me read the current codegen.c to make the stack frame fix.
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 101-200)
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 201-350)
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 351-500)
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 501-650)
+Let me search for the key constants to understand the full picture before making changes.
+
+Grep "396\|400\|200\|240\|300\|ARG_AREA\|FLOAT_SPILL_BASE\|callerArg" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+1 line of output
+Grep "396|addi.*sp|ARG_AREA|FLOAT_SPILL|callerArg|sw.*ra|lw.*ra" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+46 lines of output
+Now let me check the saved register area to see all offset references.
+
+Grep "200 \+|i \* 4|saved.*reg|save.*\$t|restore.*\$t" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+6 lines of output
+Let me read the TAC_FUNC_BEGIN and TAC_RETURN sections to understand the full context.
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 1011-1130)
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 1131-1250)
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 1641-1760)
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 1986-2035)
+Let me check lines 790-830 to see the old AST path frame setup:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 796-835)
+Now I have a complete picture. I'll make all 7 changes needed to expand the stack frame from 400→800 bytes so the float spill area no longer collides with local variables.
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Modified
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Modified
+Now update the old AST-path frame size (lines 802, 817):
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Modified
+Now update the TAC_FUNC_BEGIN frame allocation:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Modified
+Now update TAC_FUNC_END:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Modified
+Now update TAC_RETURN:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Modified
+Now update the saved register area (200 → 500) and the callerArgOffset (400 → 800):
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Modified
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Modified
+Now update the old exit path frame restore (line ~1994):
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c
+Modified
+Now let me verify all the changes look correct by checking the key locations:
+
+Grep "800|796|500|600|440|ARG_AREA|FLOAT_SPILL|callerArg" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+34 lines of output
+Let me verify no old values remain:
+
+Grep "-400|, 396\(|200 \+ i" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+1 line of output
+All old values are gone. The new stack frame layout is:
+
+Region	Offsets	Size
+Local variables	0–399	400 bytes (100 vars × 4)
+Float spill slots	440–495	56 bytes (14 slots × 4)
+Saved $t0–$t9	500–539	40 bytes
+Argument area	600–795	196 bytes
+Return address $ra	796	4 bytes
+Total frame	800 bytes	
+Now rebuild and test. Run:
+
+
+make && ./minicompiler test.cm test.s && spim -file test.s
+The float spill at offset 440+ is safely above the 400-byte local variable area, so t6 (or any FPU temp) spilled during a float operation will be reloaded correctly without the slot having been overwritten by a local variable.
+
+c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\test.cm
+The error still persists
+Let me get more diagnostic information by reading the TAC_ASSIGN section and checking what happens when a float temp is used:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 1761-1890)
+Let me find and read the TAC_ASSIGN handler:
+
+Grep "case TAC_ASSIGN" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+1 line of output
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 1349-1518)
+Let me look at tac.c to understand how types are propagated in TAC instructions:
+
+Grep "\.type|->type|TAC_FLOAT|createTAC" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c)
+56 lines of output
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c (lines 201-300)
+Let me look at allocTemp and the global temp counter:
+
+Grep "allocTemp|freeTemp|tempCounter|newTemp" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c)
+22 lines of output
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c (lines 51-110)
+Let me read the TAC_ARRAY_ACCESS handler:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 1873-1952)
+Let me check what calls freeFPUReg and where FPU regs might be cleared without saving:
+
+Grep "freeFPUReg|initFPURegs" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c)
+4 lines of output
+Let me look at the TAC print function to understand the TAC output, then add a print to help diagnose:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c (lines 681-760)
+Let me look at the output_string handler and the TAC_CALL section more carefully:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 1525-1624)
+I need more diagnostic information. Let me add detailed state-dump output to the error site so we can see exactly what's happening:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\codegen.c (lines 1179-1208)
+Let me look at the main.c to understand the compilation flow and add a TAC dump:
+
+Globpattern: "*.c"
+Found 11 files
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\main.c
+The compiler uses the optimized TAC. Let me check the optimizer — it could be stripping type annotations:
+
+Grep "optimizeTAC|optimized|copy.prop|constant.fold|->type" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c)
+29 lines of output
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c (lines 827-956)
+Let me check the isConstant function in tac.c and the optimizer's handling of float values:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c (lines 759-808)
+Let me look at generateTACStmt to understand how function call statements are handled:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c (lines 324-403)
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c (lines 465-524)
+Let me check how string literals are handled in tac.c:
+
+Grep "NODE_STRING|STRING_ASSIGN|makeStringLit|STRING_LIT" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c)
+2 lines of output
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c (lines 307-321)
+Found the root cause. Let me check the float temp bitmap declaration in tac.c:
+
+Grep "floatTempBits|markFloat|isFloatTemp" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c)
+6 lines of output
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c (lines 2-31)
+The root cause is clear: floatTempSet in tac.c is a never-cleared list. When temp t0 is marked as float (for x*y), freed, then reused for an integer operation, the old "t0" entry stays in floatTempSet. The next binary operation that uses t0 as an operand sees isFloatTempInTAC("t0") == true and incorrectly types itself as float — but t0 is in an integer register. This is exactly "float temp tN not in FPU".
+
+The fix: replace the unbounded append-only list with a per-temp flag array that gets cleared when a temp is freed.
+
+Grep "MAX_TEMPS" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c)
+3 lines of output
+Grep "MAX_TEMPS" (in c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.h)
+3 lines of output
+Now I have everything I need. Replace the append-only float temp list with a per-index flag array, and clear the flag in freeTemp:
+
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c
+Added 3 lines
+Now clear the float mark in freeTemp and in initTAC:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c (lines 37-56)
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c
+Added 1 line
+Now add the mark-clear to freeTemp:
+
+Read c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c (lines 86-105)
+Edit c:\Users\15203\Downloads\CST-405-minimal\CST-405-minimal\tac.c
+Added 1 line
+Now rebuild and test:
+
+
+make && ./minicompiler test.cm test.s && spim -file test.s
+The root cause: floatTempSet was an append-only list that never cleared marks when temps were freed. So when t0 was used for x*y (marked float), freed, then reused as i+1 (integer), isFloatTempInTAC("t0") still returned true — making the consuming binary operation get type "float", but t0 was in an integer register, not the FPU. The fix clears floatTempMark[n] in freeTemp so reused temps start clean.
+
+How can I track how long it takes to compile and run the code?
+The simplest approach is the time command in bash, which works for both steps:
+
+Compile only:
+
+
+time ./minicompiler test.cm test.s
+Run only:
+
+
+time spim -file test.s
+Both together:
+
+
+time (./minicompiler test.cm test.s && spim -file test.s)
+The output looks like:
+
+
+real    0m0.043s     ← wall-clock time (what you care about)
+user    0m0.031s     ← CPU time in user space
+sys     0m0.012s     ← CPU time in kernel
+If you want to measure multiple runs and get an average, use a shell loop:
+
+
+for i in 1 2 3 4 5; do
+    time ./minicompiler test.cm test.s 2>/dev/null
+done
+Or in PowerShell (which you also have):
+
+
+Measure-Command { ./minicompiler test.cm test.s }
+Measure-Command { spim -file test.s }
+PowerShell's Measure-Command gives millisecond precision in its output.
